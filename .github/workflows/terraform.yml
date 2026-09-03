@@ -1,0 +1,207 @@
+name: Terraform (plataforma)
+
+# Camada de plataforma: VPC + EKS + ECR + IAM/IRSA.
+#
+# Fluxo:
+#   PR (qualquer base)     -> fmt + validate + plan (comentado no PR)
+#   push desenvolvimento   -> fmt + validate + plan
+#   push homologacao       -> fmt + validate + plan
+#   push master            -> apply automatico
+#   workflow_dispatch      -> plan | apply | destroy sob demanda
+#
+# Por que apply so na master: a plataforma (rede + cluster) e COMPARTILHADA
+# pelos ambientes hml e prd, que se separam por namespace. Um unico state
+# significa um unico apply autoritativo - aplicar a partir de duas branches
+# criaria corrida de escrita no mesmo state. O deploy automatico por ambiente
+# (homologacao e producao) acontece nos repos de banco, lambda e aplicacao.
+# Ver docs/adr/0002-plataforma-compartilhada.md.
+#
+# Configuracao necessaria no repositorio:
+#   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   Variables: TF_STATE_BUCKET (bucket S3 do state)
+#              AWS_REGION (opcional, default us-east-1)
+
+on:
+  pull_request:
+  push:
+    branches: [master, homologacao, desenvolvimento]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Acao do Terraform
+        type: choice
+        required: true
+        default: plan
+        options: [plan, apply, destroy]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  # "latest" respeita o piso de required_version (>= 1.10) declarado em
+  # versions.tf. Fixe um patch exato aqui assim que o time validar uma versao.
+  TF_VERSION: latest
+
+# Um unico state: nunca dois applies simultaneos.
+concurrency:
+  group: terraform-infra-k8s
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff
+
+      # -backend=false: valida sintaxe e tipos sem tocar no S3 nem exigir
+      # credenciais AWS - falha rapido em PR de fork ou sem secrets.
+      - name: terraform validate
+        run: |
+          terraform init -backend=false
+          terraform validate -no-color
+
+  plan:
+    name: terraform plan
+    needs: validate
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name != 'master') || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=$AWS_REGION"
+
+      - name: terraform plan
+        id: plan
+        run: |
+          terraform plan -no-color -input=false | tee plan.txt
+          {
+            echo 'stdout<<PLAN_EOF'
+            tail -c 60000 plan.txt
+            echo 'PLAN_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comenta o plano no PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+          MARKER: '<!-- terraform-plan-infra-k8s -->'
+        with:
+          script: |
+            const marker = process.env.MARKER;
+            const body = `${marker}\n### Terraform plan — plataforma (VPC/EKS/ECR/IAM)\n\n<details><summary>Ver plano</summary>\n\n\`\`\`terraform\n${process.env.PLAN}\n\`\`\`\n\n</details>`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            // Atualiza o mesmo comentario a cada push do PR, em vez de empilhar.
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+  apply:
+    name: terraform apply
+    needs: validate
+    if: (github.event_name == 'push' && github.ref_name == 'master') || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+    runs-on: ubuntu-latest
+    environment: producao
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=$AWS_REGION"
+
+      # Criar o EKS do zero leva ~15-20 min; o timeout do job cobre isso.
+      - name: terraform apply
+        timeout-minutes: 45
+        run: terraform apply -auto-approve -no-color -input=false
+
+      - name: Outputs da plataforma
+        run: terraform output -no-color
+
+  destroy:
+    name: terraform destroy
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    environment: producao
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=$AWS_REGION"
+
+      # Os NLBs dos Services da aplicacao sao criados pelo Kubernetes, FORA do
+      # Terraform. Se ainda existirem, o destroy da VPC trava em ENIs orfas.
+      # Removemos os Services de todos os namespaces de aplicacao antes.
+      # Best-effort: se o cluster ja nao existe, segue para o destroy.
+      - name: Remove LoadBalancers criados pelo Kubernetes
+        run: |
+          CLUSTER=$(terraform output -raw cluster_name 2>/dev/null || echo oficina)
+          if aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" 2>/dev/null; then
+            for NS in $(terraform output -json app_namespaces 2>/dev/null | jq -r '.[]?' || echo ""); do
+              kubectl delete svc --all -n "$NS" --ignore-not-found --timeout=180s || true
+            done
+            echo "Aguardando a AWS remover os NLBs e liberar as ENIs..."
+            sleep 45
+          else
+            echo "Cluster inexistente ou inacessivel - seguindo para o destroy."
+          fi
+
+      # ATENCAO: destruir a plataforma quebra os repos de banco e aplicacao,
+      # que dependem destes outputs. Destrua o banco (oficina-infra-database)
+      # ANTES de rodar isto.
+      - name: terraform destroy
+        timeout-minutes: 45
+        run: terraform destroy -auto-approve -no-color -input=false

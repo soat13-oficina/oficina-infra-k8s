@@ -1,0 +1,42 @@
+name: PR Source Guard
+
+# Impoe o fluxo de promocao entre branches protegidas:
+#   feature/*        -> desenvolvimento   (qualquer origem)
+#   desenvolvimento  -> homologacao       (somente desta origem)
+#   homologacao      -> master            (somente desta origem)
+#
+# O GitHub nao restringe a branch de ORIGEM de um PR nativamente; este job
+# reprova o PR quando a origem nao e a permitida. Marque o job "guard" como
+# status check obrigatorio na protecao de 'master' e 'homologacao'.
+
+on:
+  pull_request:
+    branches: [master, homologacao]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar branch de origem do PR
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          echo "PR: $HEAD -> $BASE"
+          case "$BASE" in
+            master)
+              EXPECTED=homologacao ;;
+            homologacao)
+              EXPECTED=desenvolvimento ;;
+            *)
+              echo "Base '$BASE' sem restricao de origem."; exit 0 ;;
+          esac
+          if [ "$HEAD" != "$EXPECTED" ]; then
+            echo "::error::A branch '$BASE' so aceita PR vindo de '$EXPECTED' (origem recebida: '$HEAD')."
+            exit 1
+          fi
+          echo "Origem permitida."

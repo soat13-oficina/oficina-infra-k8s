@@ -1,0 +1,10 @@
+# Copie para backend.hcl (gitignored) e ajuste com o bucket do grupo:
+#   terraform init -backend-config=backend.hcl
+#
+# O MESMO bucket e usado pelos quatro repositorios; o que muda e a "key",
+# fixada em versions.tf de cada repo:
+#   oficina/infra-k8s.tfstate       <- este repositorio
+#   oficina/infra-database.tfstate  <- oficina-infra-database
+#   oficina/lambda-auth.tfstate     <- oficina-lambda-auth
+bucket = "SEU-BUCKET-DE-STATE-AQUI"
+region = "us-east-1"

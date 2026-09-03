@@ -1,0 +1,46 @@
+name: Formatar Terraform
+
+# Roda `terraform fmt -recursive` e commita o resultado na branch atual.
+#
+# Existe porque o gate `terraform fmt -check` do pipeline principal reprova
+# qualquer desalinhamento, e nem todo mundo do time tem o Terraform instalado
+# na maquina. Em vez de adivinhar o alinhamento, use este botao.
+#
+# COMO USAR: aba Actions -> "Formatar Terraform" -> Run workflow -> escolha a
+# SUA branch de trabalho (nao a master nem a homologacao: elas sao protegidas
+# e o push seria recusado).
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fmt:
+    name: terraform fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+
+      - name: terraform fmt -recursive
+        run: terraform fmt -recursive -diff
+
+      - name: Commita o resultado, se houver mudanca
+        run: |
+          if git diff --quiet; then
+            echo "Nada a formatar - os arquivos ja estao no formato canonico."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "style: terraform fmt -recursive"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "Formatacao aplicada e commitada em ${GITHUB_REF_NAME}."
