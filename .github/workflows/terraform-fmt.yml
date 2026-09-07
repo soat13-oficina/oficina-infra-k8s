@@ -1,10 +1,11 @@
 name: Formatar Terraform
 
-# Roda `terraform fmt -recursive` e commita o resultado na branch atual.
+# Manutencao do codigo Terraform: formata e atualiza o .terraform.lock.hcl.
+# Commita o resultado na branch em que roda.
 #
-# Existe porque o gate `terraform fmt -check` do pipeline principal reprova
-# qualquer desalinhamento, e nem todo mundo do time tem o Terraform instalado
-# na maquina. Em vez de adivinhar o alinhamento, use este botao.
+# Existe porque nem todo mundo do time tem o Terraform instalado na maquina, e
+# os dois gates do pipeline principal (fmt -check e init) reprovam quando o
+# formato ou o lockfile ficam para tras.
 #
 # COMO USAR: aba Actions -> "Formatar Terraform" -> Run workflow -> escolha a
 # SUA branch de trabalho (nao a master nem a homologacao: elas sao protegidas
@@ -17,8 +18,8 @@ permissions:
   contents: write
 
 jobs:
-  fmt:
-    name: terraform fmt
+  manutencao:
+    name: fmt + lockfile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,15 +33,41 @@ jobs:
       - name: terraform fmt -recursive
         run: terraform fmt -recursive -diff
 
+      # -upgrade reavalia as versoes de provider dentro das restricoes
+      # declaradas no codigo e regrava o lockfile. E o que resolve o erro
+      # "locked provider ... does not match configured version constraint",
+      # que aparece quando um modulo passa a exigir um provider mais novo do
+      # que o fixado no lock.
+      #
+      # -backend=false: nao toca no bucket de state e nao precisa de
+      # credencial AWS - esta etapa e puramente sobre resolucao de versoes.
+      - name: terraform init -upgrade (regrava o lockfile)
+        run: terraform init -upgrade -backend=false
+
+      # Sem isto o lockfile so cobre linux_amd64, a plataforma do runner, e
+      # quem rodar "terraform init" no Windows ou no Mac recebe erro de
+      # pacote indisponivel para a propria plataforma.
+      - name: Registra os hashes das plataformas do time
+        run: |
+          terraform providers lock \
+            -platform=linux_amd64 \
+            -platform=darwin_amd64 \
+            -platform=darwin_arm64 \
+            -platform=windows_amd64
+
       - name: Commita o resultado, se houver mudanca
         run: |
           if git diff --quiet; then
-            echo "Nada a formatar - os arquivos ja estao no formato canonico."
+            echo "Nada a mudar - formato e lockfile ja estao em dia."
             exit 0
           fi
 
+          echo "--- arquivos alterados ---"
+          git diff --stat
+
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "style: terraform fmt -recursive"
+          git add -A
+          git commit -m "chore(terraform): fmt e atualizacao do lockfile"
           git push origin "HEAD:${GITHUB_REF_NAME}"
-          echo "Formatacao aplicada e commitada em ${GITHUB_REF_NAME}."
+          echo "Commitado em ${GITHUB_REF_NAME}."
