@@ -87,7 +87,7 @@ nome da bucket.
 
 **Opção A — pela pipeline (recomendado).** Merge na `master` dispara o `apply`
 automaticamente. Para rodar sob demanda: aba **Actions** → workflow
-**Terraform (plataforma)** → *Run workflow* → `plan` | `apply` | `destroy`.
+**CI/CD (plataforma Kubernetes)** → *Run workflow* → `plan` | `apply` | `destroy`.
 
 **Opção B — local:**
 
@@ -111,7 +111,7 @@ terraform output
 
 ## CI/CD
 
-Workflow: [`.github/workflows/terraform.yml`](.github/workflows/terraform.yml)
+Workflow: [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml)
 
 | Gatilho | O que roda |
 |---|---|
@@ -120,10 +120,33 @@ Workflow: [`.github/workflows/terraform.yml`](.github/workflows/terraform.yml)
 | Push em `master` | `fmt -check` → `validate` → **`apply` automático** |
 | *Run workflow* manual | `plan`, `apply` ou `destroy` |
 
-`concurrency: terraform-infra-k8s` garante que nunca haja dois `apply`
+Jobs, no padrão de nomes comum aos quatro repositórios do projeto:
+
+| Job | O que faz |
+|---|---|
+| `validacao` | `terraform fmt -check` e `terraform validate` — sem backend e sem credencial AWS, falha rápido |
+| `plan` | `terraform plan`, comentado no próprio PR |
+| `deploy` | `terraform apply` da plataforma |
+| `destroy` | Remove os LoadBalancers criados pelo cluster e destrói a plataforma |
+
+`concurrency: oficina-infra-k8s` garante que nunca haja dois `apply`
 concorrentes no mesmo state. O job de `destroy` remove antes os Services do
 Kubernetes — os NLBs são criados pelo cluster, fora do Terraform, e travariam a
 remoção da VPC com ENIs órfãs.
+
+### Workflow auxiliar — `Formatar Terraform`
+
+[`terraform-fmt.yml`](.github/workflows/terraform-fmt.yml), manual (*Run
+workflow*): roda `terraform fmt -recursive`, regrava o `.terraform.lock.hcl`
+com os hashes de Linux, macOS e Windows e commita o resultado **na branch em que
+foi disparado** — escolha a sua branch de trabalho, não `master` nem
+`homologacao` (protegidas, o push seria recusado).
+
+Existe porque o gate `fmt -check` reprova qualquer desalinhamento e nem todo
+mundo do time tem o Terraform instalado na máquina. Enquanto o
+`.terraform.lock.hcl` não estiver versionado, cada `terraform init` resolve as
+versões de provider do zero dentro das restrições de `versions.tf`; rode este
+workflow uma vez na sua branch para fixá-las.
 
 ### Configuração exigida no repositório
 
@@ -161,8 +184,8 @@ Somando o RDS de hml e prd (repo do banco), o ambiente completo fica em
 dos outputs desta camada e ficaria órfão.
 
 ```bash
-# 1. No repo oficina-infra-database: Actions -> Terraform (banco) -> destroy (hml e prd)
-# 2. Aqui:  Actions -> Terraform (plataforma) -> destroy
+# 1. No repo oficina-infra-database: Actions -> CI/CD (banco de dados) -> destroy (hml e prd)
+# 2. Aqui:  Actions -> CI/CD (plataforma Kubernetes) -> destroy
 ```
 
 O job de `destroy` já remove os Services/NLBs do cluster antes de derrubar a VPC.

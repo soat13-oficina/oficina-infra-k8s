@@ -1,4 +1,4 @@
-name: Terraform (plataforma)
+name: CI/CD (plataforma Kubernetes)
 
 # Camada de plataforma: VPC + EKS + ECR + IAM/IRSA.
 #
@@ -8,6 +8,9 @@ name: Terraform (plataforma)
 #   push homologacao       -> fmt + validate + plan
 #   push master            -> apply automatico
 #   workflow_dispatch      -> plan | apply | destroy sob demanda
+#
+# Nomes de job seguem o padrao comum aos quatro repositorios do projeto:
+# validacao . plan . deploy . destroy.
 #
 # Por que apply so na master: a plataforma (rede + cluster) e COMPARTILHADA
 # pelos ambientes hml e prd, que se separam por namespace. Um unico state
@@ -46,12 +49,12 @@ env:
 
 # Um unico state: nunca dois applies simultaneos.
 concurrency:
-  group: terraform-infra-k8s
+  group: oficina-infra-k8s
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: fmt + validate
+  validacao:
+    name: Validacao do Terraform (fmt + validate)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +75,7 @@ jobs:
 
   plan:
     name: terraform plan
-    needs: validate
+    needs: validacao
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name != 'master') || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
     runs-on: ubuntu-latest
     steps:
@@ -125,9 +128,9 @@ jobs:
               await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
             }
 
-  apply:
-    name: terraform apply
-    needs: validate
+  deploy:
+    name: Deploy da plataforma
+    needs: validacao
     if: (github.event_name == 'push' && github.ref_name == 'master') || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
     runs-on: ubuntu-latest
     environment: producao
@@ -159,7 +162,7 @@ jobs:
         run: terraform output -no-color
 
   destroy:
-    name: terraform destroy
+    name: Destroy da plataforma
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
     runs-on: ubuntu-latest
     environment: producao

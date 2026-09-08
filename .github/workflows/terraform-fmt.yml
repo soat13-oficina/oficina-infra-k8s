@@ -57,13 +57,17 @@ jobs:
 
       - name: Commita o resultado, se houver mudanca
         run: |
-          if git diff --quiet; then
+          # git status, e nao git diff: o .terraform.lock.hcl pode ainda nao
+          # existir no repositorio, e arquivo NOVO nao aparece em git diff.
+          # Com git diff --quiet, a primeira geracao do lockfile sairia daqui
+          # com "nada a mudar" e seria descartada junto com o runner.
+          if [ -z "$(git status --porcelain)" ]; then
             echo "Nada a mudar - formato e lockfile ja estao em dia."
             exit 0
           fi
 
           echo "--- arquivos alterados ---"
-          git diff --stat
+          git status --short
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
