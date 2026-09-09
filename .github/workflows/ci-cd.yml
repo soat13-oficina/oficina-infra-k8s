@@ -259,4 +259,11 @@ jobs:
           # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
           # default e ligado; so um dispatch explicito com datadog=off desliga.
           TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
+          # A app key tambem e obrigatoria AQUI, e nao so no apply. Dashboard, monitors,
+          # synthetic e SLO estao no state, e o destroy remove tudo que esta no state -
+          # independente de count. Para DELETAR qualquer um deles o provider precisa
+          # autenticar na API de configuracao, o que exige as DUAS chaves: sem a app key
+          # o destroy falha com 403 no primeiro objeto da Datadog e para no meio.
+          TF_VAR_datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          TF_VAR_app_public_url: ${{ vars.APP_PUBLIC_URL }}
         run: terraform destroy -auto-approve -no-color -input=false
