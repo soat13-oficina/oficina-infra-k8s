@@ -22,8 +22,14 @@ name: CI/CD (plataforma Kubernetes)
 # Configuracao necessaria no repositorio:
 #   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 #              DATADOG_API_KEY (opcional; ausente = plataforma sem observabilidade)
+#              DATADOG_APP_KEY (opcional; ausente = agent sobe, mas sem dashboard,
+#                               monitors, synthetic nem SLO - sao escrita na API de
+#                               configuracao e a API key nao autoriza isso)
 #   Variables: TF_STATE_BUCKET (bucket S3 do state)
 #              AWS_REGION (opcional, default us-east-1)
+#              APP_PUBLIC_URL (opcional; URL do NLB da aplicacao, sem barra final -
+#                              habilita o teste sintetico de uptime. So existe depois
+#                              do primeiro deploy da aplicacao)
 #
 # BOOTSTRAP DE CLUSTER NOVO: o primeiro apply precisa rodar com o input datadog=off
 # (workflow_dispatch), senao o provider helm tenta se configurar a partir de um cluster
@@ -117,6 +123,12 @@ jobs:
           # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
           # default e ligado; so um dispatch explicito com datadog=off desliga.
           TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
+          # Credencial SEPARADA da API key: e ela que autoriza criar dashboard, monitor,
+          # synthetic e SLO. Ausente = agent sobe, mas nada de configuracao e criado.
+          TF_VAR_datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          # Endereco publico do NLB, so conhecido depois do primeiro deploy da aplicacao.
+          # Vazio = teste sintetico de uptime nao entra no plano.
+          TF_VAR_app_public_url: ${{ vars.APP_PUBLIC_URL }}
         run: |
           terraform plan -no-color -input=false | tee plan.txt
           {
@@ -182,6 +194,13 @@ jobs:
           # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
           # default e ligado; so um dispatch explicito com datadog=off desliga.
           TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
+          # Dashboard, monitors, synthetic e SLO. Sao ESCRITA na API de configuracao da
+          # Datadog e exigem application key, que a API key nao substitui.
+          TF_VAR_datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          # Endereco publico do NLB (variable do repositorio). O Service e criado pelo
+          # Kubernetes, fora do Terraform, entao este valor so existe apos o primeiro
+          # deploy da aplicacao - ate la o teste sintetico de uptime fica desligado.
+          TF_VAR_app_public_url: ${{ vars.APP_PUBLIC_URL }}
         run: terraform apply -auto-approve -no-color -input=false
 
       - name: Outputs da plataforma

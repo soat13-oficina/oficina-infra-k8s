@@ -13,6 +13,13 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 3.0"
     }
+    # Dashboards, monitors, synthetics e SLO (datadog-*.tf). Note que este provider fala
+    # com a API da Datadog, e nao com o cluster: ele funciona - e e planejado - mesmo com o
+    # EKS inteiro fora do ar, o que e justamente o que se quer de um monitor.
+    datadog = {
+      source  = "DataDog/datadog"
+      version = "~> 3.0"
+    }
   }
 
   # Backend parcial: bucket e region vem de backend.hcl (nao versionado).
