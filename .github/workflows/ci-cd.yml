@@ -99,6 +99,10 @@ jobs:
 
       - name: terraform plan
         id: plan
+        env:
+          # Sem o secret a variavel chega vazia e o helm_release do Datadog nao entra no
+          # plano (count = 0) - o plano segue valido, apenas sem observabilidade.
+          TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
         run: |
           terraform plan -no-color -input=false | tee plan.txt
           {
@@ -156,6 +160,11 @@ jobs:
       # Criar o EKS do zero leva ~15-20 min; o timeout do job cobre isso.
       - name: terraform apply
         timeout-minutes: 45
+        env:
+          # Habilita o Datadog Agent (datadog.tf). Secret AUSENTE = variavel vazia = o
+          # helm_release nao e criado, e o apply roda exatamente como antes. Configurar o
+          # secret DATADOG_API_KEY e o unico passo para ligar a observabilidade.
+          TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
         run: terraform apply -auto-approve -no-color -input=false
 
       - name: Outputs da plataforma
@@ -207,4 +216,8 @@ jobs:
       # ANTES de rodar isto.
       - name: terraform destroy
         timeout-minutes: 45
+        env:
+          # Precisa da mesma variavel do apply: sem ela o helm_release do Datadog sai do
+          # plano de destroy e fica orfao no state, travando a remocao do node group.
+          TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
         run: terraform destroy -auto-approve -no-color -input=false

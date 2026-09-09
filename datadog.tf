@@ -7,6 +7,19 @@
 # queimar dias de trial durante o desenvolvimento.
 #
 #   terraform apply -var="datadog_api_key=$DD_API_KEY"
+#
+# Na pipeline a chave chega por TF_VAR_datadog_api_key, do secret DATADOG_API_KEY.
+#
+# CLUSTER NOVO EXIGE DOIS APPLIES. O provider helm abaixo se configura a partir de
+# module.eks, entao num apply que CRIA o cluster do zero o endpoint e o CA ainda sao
+# desconhecidos na hora do plan e o provider nao consegue se configurar. Ordem correta
+# partindo do nada:
+#
+#   1. apply SEM a chave  -> cria VPC, EKS e node group (helm_release fica com count = 0,
+#                            o provider nunca e configurado e o problema nao aparece)
+#   2. apply COM a chave  -> o cluster ja existe, os valores sao conhecidos, o agent sobe
+#
+# Com o cluster ja no ar - que e o caso aqui - um unico apply com a chave basta.
 
 provider "helm" {
   kubernetes = {

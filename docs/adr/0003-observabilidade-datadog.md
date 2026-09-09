@@ -142,6 +142,17 @@ explorer e network monitoring ficam desligados.
 
 - **Custo de nodes sobe** (`t3.small` → `t3.medium`, ~2× o preço dos nodes). É o
   preço de rodar um agent por node; mitigado desligando o que não é usado.
+- **A troca de `instance_types` recria o managed node group.** `instance_types` é
+  `ForceNew` no provider AWS: o apply que muda `t3.small` → `t3.medium` destrói e
+  recria o node group, com reagendamento de todos os pods e alguns minutos de
+  indisponibilidade. Não é um efeito colateral escondido — é o custo de caber o
+  agent, e deve ser feito numa janela combinada, não junto de um deploy de
+  aplicação.
+- **Cluster novo exige dois `apply`.** O provider `helm` se configura a partir de
+  `module.eks`; num apply que cria o cluster do zero esses valores ainda são
+  desconhecidos no plan. Partindo do nada: um apply sem a chave (cria a
+  plataforma) e outro com ela (sobe o agent). Com o cluster já no ar, um apply
+  basta. Detalhado em `datadog.tf`.
 - **Janela de 14 dias.** Ativar o trial perto da entrega, e não no início do
   desenvolvimento; o Terraform fica versionado e inerte até lá.
 - **Nomes de métrica divergem entre Prometheus e Datadog**
