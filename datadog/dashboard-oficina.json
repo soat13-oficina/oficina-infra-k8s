@@ -1,0 +1,559 @@
+{
+  "title": "Oficina - Ordens de Servico e Plataforma",
+  "description": "Dashboard unico da Fase 3: volume diario de OS, tempo medio por situacao, latencia e erros das APIs, CPU/memoria no Kubernetes, uptime e falhas nas integracoes.\n\nOs seletores no topo trocam de ambiente. Sao dois porque as fontes usam tags diferentes: $env vale para APM e (como ambiente:$env.value) para as metricas de negocio, enquanto kube-state-metrics so conhece $kube_namespace. Ao trocar um, troque o outro.\n\nGerenciado por Terraform em oficina-infra-k8s/datadog-dashboard.tf - edicoes feitas pela UI sao desfeitas no proximo apply.",
+  "layout_type": "ordered",
+  "reflow_type": "fixed",
+  "template_variables": [
+    {
+      "name": "env",
+      "prefix": "env",
+      "available_values": ["prd", "hml"],
+      "default": "prd"
+    },
+    {
+      "name": "kube_namespace",
+      "prefix": "kube_namespace",
+      "available_values": ["oficina-prd", "oficina-hml"],
+      "default": "oficina-prd"
+    }
+  ],
+  "widgets": [
+    {
+      "definition": {
+        "title": "Ordens de servico (negocio)",
+        "type": "group",
+        "layout_type": "ordered",
+        "banner_img": "",
+        "show_title": true,
+        "widgets": [
+          {
+            "definition": {
+              "title": "OS criadas no periodo",
+              "type": "query_value",
+              "autoscale": false,
+              "precision": 0,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "criadas",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.criadas.count{ambiente:$env.value}.as_count()",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [{ "formula": "criadas" }],
+                  "conditional_formats": [
+                    {
+                      "comparator": ">=",
+                      "value": 0,
+                      "palette": "black_on_light_green"
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 0, "y": 0, "width": 3, "height": 3 }
+          },
+          {
+            "definition": {
+              "title": "Volume diario de OS",
+              "type": "timeseries",
+              "show_legend": false,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "criadas",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.criadas.count{ambiente:$env.value}.as_count().rollup(sum, 86400)"
+                    }
+                  ],
+                  "formulas": [{ "formula": "criadas", "alias": "OS criadas no dia" }],
+                  "style": { "palette": "dog_classic" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 3, "y": 0, "width": 9, "height": 3 }
+          },
+          {
+            "definition": {
+              "title": "Tempo medio na situacao, em minutos (Diagnostico, Execucao, Finalizacao...)",
+              "type": "timeseries",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "soma",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.tempo_na_situacao.sum{ambiente:$env.value} by {situacao}"
+                    },
+                    {
+                      "name": "contagem",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.tempo_na_situacao.count{ambiente:$env.value} by {situacao}"
+                    }
+                  ],
+                  "formulas": [{ "formula": "(soma / contagem) / 60", "alias": "minutos" }],
+                  "style": { "palette": "dog_classic", "line_type": "solid", "line_width": "normal" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 0, "y": 3, "width": 6, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Tempo medio por situacao (minutos)",
+              "type": "query_table",
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "soma",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.tempo_na_situacao.sum{ambiente:$env.value} by {situacao}",
+                      "aggregator": "sum"
+                    },
+                    {
+                      "name": "contagem",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.tempo_na_situacao.count{ambiente:$env.value} by {situacao}",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "(soma / contagem) / 60",
+                      "alias": "Tempo medio (min)",
+                      "cell_display_mode": "bar",
+                      "limit": { "count": 10, "order": "desc" }
+                    },
+                    {
+                      "formula": "contagem",
+                      "alias": "Transicoes concluidas"
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 6, "y": 3, "width": 6, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Transicoes de situacao (para onde a OS foi)",
+              "type": "timeseries",
+              "show_legend": true,
+              "legend_layout": "horizontal",
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "transicoes",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.os.transicoes.count{ambiente:$env.value} by {situacao}.as_count()"
+                    }
+                  ],
+                  "formulas": [{ "formula": "transicoes" }],
+                  "style": { "palette": "cool" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 0, "y": 7, "width": 12, "height": 3 }
+          }
+        ]
+      },
+      "layout": { "x": 0, "y": 0, "width": 12, "height": 11 }
+    },
+    {
+      "definition": {
+        "title": "APIs - latencia e erros (APM)",
+        "type": "group",
+        "layout_type": "ordered",
+        "show_title": true,
+        "widgets": [
+          {
+            "definition": {
+              "title": "Latencia das APIs (p50 / p95 / p99)",
+              "type": "timeseries",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "p50",
+                      "data_source": "metrics",
+                      "query": "p50:trace.servlet.request{$env,service:oficina-api}"
+                    },
+                    {
+                      "name": "p95",
+                      "data_source": "metrics",
+                      "query": "p95:trace.servlet.request{$env,service:oficina-api}"
+                    },
+                    {
+                      "name": "p99",
+                      "data_source": "metrics",
+                      "query": "p99:trace.servlet.request{$env,service:oficina-api}"
+                    }
+                  ],
+                  "formulas": [
+                    { "formula": "p50", "alias": "p50" },
+                    { "formula": "p95", "alias": "p95" },
+                    { "formula": "p99", "alias": "p99" }
+                  ],
+                  "style": { "palette": "dog_classic", "line_type": "solid", "line_width": "normal" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true },
+              "markers": [
+                {
+                  "value": "y = ${alvo_p95}",
+                  "display_type": "error dashed",
+                  "label": "alvo p95"
+                }
+              ]
+            },
+            "layout": { "x": 0, "y": 0, "width": 8, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Requisicoes no periodo",
+              "type": "query_value",
+              "autoscale": true,
+              "precision": 0,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "hits",
+                      "data_source": "metrics",
+                      "query": "sum:trace.servlet.request.hits{$env,service:oficina-api}.as_count()",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [{ "formula": "hits" }]
+                }
+              ]
+            },
+            "layout": { "x": 8, "y": 0, "width": 4, "height": 2 }
+          },
+          {
+            "definition": {
+              "title": "Taxa de erro 5xx (%)",
+              "type": "query_value",
+              "autoscale": false,
+              "precision": 2,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "erros",
+                      "data_source": "metrics",
+                      "query": "sum:trace.servlet.request.errors{$env,service:oficina-api}.as_count()",
+                      "aggregator": "sum"
+                    },
+                    {
+                      "name": "total",
+                      "data_source": "metrics",
+                      "query": "sum:trace.servlet.request.hits{$env,service:oficina-api}.as_count()",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [{ "formula": "100 * (erros / total)" }],
+                  "conditional_formats": [
+                    { "comparator": ">=", "value": 5, "palette": "white_on_red" },
+                    { "comparator": ">=", "value": 2, "palette": "white_on_yellow" },
+                    { "comparator": "<", "value": 2, "palette": "white_on_green" }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 8, "y": 2, "width": 4, "height": 2 }
+          },
+          {
+            "definition": {
+              "title": "Endpoints mais lentos (p95)",
+              "type": "toplist",
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "lentos",
+                      "data_source": "metrics",
+                      "query": "p95:trace.servlet.request{$env,service:oficina-api} by {resource_name}",
+                      "aggregator": "avg"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "lentos",
+                      "limit": { "count": 10, "order": "desc" }
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 0, "y": 4, "width": 6, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Endpoints com mais erros",
+              "type": "toplist",
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "erros",
+                      "data_source": "metrics",
+                      "query": "sum:trace.servlet.request.errors{$env,service:oficina-api} by {resource_name}.as_count()",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "erros",
+                      "limit": { "count": 10, "order": "desc" }
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 6, "y": 4, "width": 6, "height": 4 }
+          }
+        ]
+      },
+      "layout": { "x": 0, "y": 11, "width": 12, "height": 9 }
+    },
+    {
+      "definition": {
+        "title": "Kubernetes - CPU, memoria e saude dos pods",
+        "type": "group",
+        "layout_type": "ordered",
+        "show_title": true,
+        "widgets": [
+          {
+            "definition": {
+              "title": "CPU por pod, em cores (linha tracejada = limite)",
+              "type": "timeseries",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "area",
+                  "queries": [
+                    {
+                      "name": "uso",
+                      "data_source": "metrics",
+                      "query": "avg:kubernetes.cpu.usage.total{$kube_namespace,kube_deployment:oficina-api} by {pod_name}"
+                    }
+                  ],
+                  "formulas": [{ "formula": "uso / 1000000000", "alias": "uso (cores)" }],
+                  "style": { "palette": "cool" }
+                },
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "limite",
+                      "data_source": "metrics",
+                      "query": "avg:kubernetes.cpu.limits{$kube_namespace,kube_deployment:oficina-api}"
+                    }
+                  ],
+                  "formulas": [{ "formula": "limite", "alias": "limite (cores)" }],
+                  "style": { "palette": "warm", "line_type": "dashed", "line_width": "thin" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 0, "y": 0, "width": 6, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Memoria por pod, em bytes (linha tracejada = limite)",
+              "type": "timeseries",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "area",
+                  "queries": [
+                    {
+                      "name": "uso",
+                      "data_source": "metrics",
+                      "query": "avg:kubernetes.memory.usage{$kube_namespace,kube_deployment:oficina-api} by {pod_name}"
+                    }
+                  ],
+                  "formulas": [{ "formula": "uso", "alias": "uso" }],
+                  "style": { "palette": "cool" }
+                },
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "limite",
+                      "data_source": "metrics",
+                      "query": "avg:kubernetes.memory.limits{$kube_namespace,kube_deployment:oficina-api}"
+                    }
+                  ],
+                  "formulas": [{ "formula": "limite", "alias": "limite" }],
+                  "style": { "palette": "warm", "line_type": "dashed", "line_width": "thin" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 6, "y": 0, "width": 6, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Replicas prontas",
+              "type": "query_value",
+              "autoscale": false,
+              "precision": 0,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "prontas",
+                      "data_source": "metrics",
+                      "query": "sum:kubernetes_state.deployment.replicas_ready{$kube_namespace,kube_deployment:oficina-api}",
+                      "aggregator": "last"
+                    }
+                  ],
+                  "formulas": [{ "formula": "prontas" }],
+                  "conditional_formats": [
+                    { "comparator": "<", "value": 1, "palette": "white_on_red" },
+                    { "comparator": "<", "value": 2, "palette": "white_on_yellow" },
+                    { "comparator": ">=", "value": 2, "palette": "white_on_green" }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 0, "y": 4, "width": 3, "height": 2 }
+          },
+          {
+            "definition": {
+              "title": "Reinicios de container",
+              "type": "timeseries",
+              "show_legend": false,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "restarts",
+                      "data_source": "metrics",
+                      "query": "sum:kubernetes_state.container.restarts{$kube_namespace} by {kube_container_name}.as_count()"
+                    }
+                  ],
+                  "formulas": [{ "formula": "restarts" }],
+                  "style": { "palette": "warm" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 3, "y": 4, "width": 9, "height": 2 }
+          }
+        ]
+      },
+      "layout": { "x": 0, "y": 20, "width": 12, "height": 7 }
+    },
+    {
+      "definition": {
+        "title": "Falhas, integracoes e uptime",
+        "type": "group",
+        "layout_type": "ordered",
+        "show_title": true,
+        "widgets": [
+          {
+            "definition": {
+              "title": "Disponibilidade da API",
+              "type": "slo",
+              "view_type": "detail",
+              "view_mode": "overall",
+              "slo_id": "${slo_id}",
+              "show_error_budget": true,
+              "time_windows": ["7d", "30d"],
+              "global_time_target": "0"
+            },
+            "layout": { "x": 0, "y": 0, "width": 4, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Notificacoes que esgotaram as 5 tentativas",
+              "type": "timeseries",
+              "show_legend": false,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "falhas",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.notificacoes.falhas.count{ambiente:$env.value}.as_count()"
+                    }
+                  ],
+                  "formulas": [{ "formula": "falhas", "alias": "falhas definitivas" }],
+                  "style": { "palette": "warm" }
+                }
+              ],
+              "yaxis": { "min": "0", "include_zero": true }
+            },
+            "layout": { "x": 4, "y": 0, "width": 8, "height": 4 }
+          },
+          {
+            "definition": {
+              "title": "Erros da aplicacao e das integracoes (logs correlacionados)",
+              "type": "list_stream",
+              "requests": [
+                {
+                  "response_format": "event_list",
+                  "query": {
+                    "data_source": "logs_stream",
+                    "query_string": "service:oficina-api $env (status:error OR @log.level:ERROR)",
+                    "indexes": [],
+                    "storage": "hot"
+                  },
+                  "columns": [
+                    { "field": "timestamp", "width": "auto" },
+                    { "field": "@log.logger", "width": "auto" },
+                    { "field": "@correlation_id", "width": "auto" },
+                    { "field": "@numero_ordem_servico", "width": "auto" },
+                    { "field": "content", "width": "full" }
+                  ]
+                }
+              ]
+            },
+            "layout": { "x": 0, "y": 4, "width": 12, "height": 4 }
+          }
+        ]
+      },
+      "layout": { "x": 0, "y": 27, "width": 12, "height": 9 }
+    }
+  ]
+}

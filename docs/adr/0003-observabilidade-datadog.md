@@ -98,12 +98,90 @@ alguém à toa. Os três sinais que valem:
 2. 5xx no APM.
 3. Erros de SES e do webhook de orçamento.
 
+### Nomes de métrica: mapeamento explícito no check, não convenção
+
+Entre o código e o Datadog o nome muda três vezes, e cada etapa é imposta por uma
+ferramenta diferente: o Micrometer troca `.` por `_` e acrescenta sufixo de tipo
+(`os.criadas` → `os_criadas_total`; o *timer* vira a summary
+`os_tempo_na_situacao_seconds`); o check OpenMetrics v2 exige o counter **sem** `_total` e
+devolve tudo com `.count`/`.sum`; e o `namespace` obrigatório prepende `oficina.`.
+
+A lista de `metrics` da anotação passou a usar **mapeamento explícito**
+(`{"os_criadas": "os.criadas"}`). Sem ele havia um erro silencioso e um risco:
+
+- a entrada `os_tempo_na_situacao` **não casa** com a família real, que é
+  `os_tempo_na_situacao_seconds` — o tempo médio por status, item explícito da tarefa,
+  simplesmente não chegaria;
+- os demais chegariam como `oficina.os_criadas.count`, e não com o nome de negócio.
+
+Os nomes finais (`oficina.os.criadas.count`, `oficina.os.tempo_na_situacao.sum`, …) foram
+**verificados contra a saída real** de `/actuator/prometheus`, com a aplicação rodando e
+uma OS transitando de situação — não deduzidos da documentação.
+
+### Um nome de serviço só, em todos os sinais
+
+`spring.application.name` passou de `oficina` para `oficina-api`. Esse valor vai para o
+campo `service.name` do log ECS, enquanto APM (`DD_SERVICE`), o label
+`tags.datadoghq.com/service` do pod e o `Service` do Kubernetes sempre disseram
+`oficina-api`. Divergência ali coloca o log da aplicação sob outro serviço no Datadog e
+desfaz a correlação log ↔ trace, que é o item mais visível da entrega.
+
+### Dashboards e monitors como código, com o JSON em arquivo
+
+O dashboard é um `datadog_dashboard_json` que lê `datadog/dashboard-oficina.json`, e não
+blocos de widget em HCL. O JSON é o mesmo formato que a API devolve: iterar o layout na UI
+durante a demo e trazer o resultado de volta é copiar e colar, enquanto o HCL tipado
+exigiria uma tradução manual a cada ajuste — e é nessa tradução que o dashboard versionado
+começa a divergir do que está no ar. O preço é que o Terraform não valida o conteúdo: erro
+de schema só aparece no `apply`.
+
+Os monitors, esses sim, são recursos tipados: são poucos, mudam pouco e ganham em ser
+revisáveis linha a linha no PR. Todas as oito consultas foram validadas pelo
+`validate_monitor_definition` do MCP da Datadog antes do commit.
+
+### Monitors em um ambiente só; dashboard nos dois
+
+Os monitors cobrem `var.datadog_ambiente_monitorado` (padrão `prd`). Duplicá-los em
+homologação dobraria a quantidade de alertas para vigiar um ambiente onde ninguém está de
+plantão e que nem sempre está no ar. O dashboard alterna entre ambientes por *template
+variable*.
+
+São **dois** seletores, e não um, porque as fontes não compartilham tag: métrica de
+negócio traz `ambiente` (aplicada pela própria aplicação, garantida mesmo se o agent não
+ler os labels do pod), o APM traz `env` (de `DD_ENV`) e o kube-state-metrics só conhece
+`kube_namespace`. Um seletor único dependeria de tagging que nenhuma das três garante.
+
+### Uptime externo aponta para `/v3/api-docs`, não para o actuator
+
+O plano original previa o teste sintético contra `/actuator/health/liveness`. Não é
+possível: em nuvem o actuator responde na 8081, porta deliberadamente ausente do `Service`
+— um teste sintético roda de fora e só alcança a 8080. `/v3/api-docs` é o endpoint público
+(`permitAll`) mais barato que ainda exercita Tomcat e Spring MVC de ponta a ponta.
+
+A saúde do banco não fica descoberta: ela continua no `readinessProbe` (grupo `readiness =
+readinessState,db`), e sua queda aparece no monitor de réplicas prontas. Os dois sinais
+respondem a perguntas diferentes — "o pod acha que está bem" e "um cliente na internet
+consegue usar a API" — e alimentam juntos o SLO de disponibilidade.
+
 ### O stack é opt-in por chave
 
 Sem `var.datadog_api_key` o `helm_release` não é criado (`count = 0`) e o `apply`
 segue idêntico ao de hoje. O free tier cobre métricas de infra mas **não** cobre
 APM nem logs, que são o miolo da entrega; o caminho é o trial de 14 dias, ativado
 perto da demo.
+
+São **duas** chaves, e não uma. A API key identifica a organização e serve para *enviar*
+telemetria — é tudo que o Agent precisa. Dashboard, monitor, teste sintético e SLO são
+**escrita na API de configuração** e exigem também uma *application key*, que identifica o
+usuário que assina a chamada. Daí dois gates independentes: só a API key sobe o agent sem
+criar monitor nenhum; `var.datadog_app_key` liga o resto.
+
+O `provider "datadog"` recebe `validate = false` enquanto as chaves estão vazias. Sem isso
+ele tenta autenticar em todo `plan` — inclusive no `terraform validate` do CI, que roda sem
+secret — e falha antes de olhar para recursos que estão todos em `count = 0`.
+
+O teste sintético tem um terceiro gate, `var.app_public_url`: o NLB é criado pelo `Service`
+do Kubernetes, **fora** do Terraform, e só existe depois do primeiro deploy da aplicação.
 
 ### `t3.small` → `t3.medium`
 
@@ -118,7 +196,11 @@ explorer e network monitoring ficam desligados.
 
 | Alternativa | Por que não |
 |---|---|
-| **New Relic** | Equivalente em capacidade e com free tier mais generoso (100 GB/mês, incluindo APM). Perde no ferramental: o MCP oficial da Datadog permite iterar dashboard widget a widget com validação (`validate_dashboard_widget`, `ask_widget_expert`) e depois exportar o JSON pronto para o Terraform. |
+| **New Relic** | Equivalente em capacidade e com free tier mais generoso (100 GB/mês, incluindo APM). Perde no ferramental: o MCP oficial da Datadog fecha o ciclo de autoria — validar definição de monitor, consultar métricas e locations, e exportar o JSON do dashboard pronto para o Terraform — sem sair do editor. |
+| **Widgets em HCL tipado** (`datadog_dashboard`) | Ganharia validação de schema no `terraform validate`. Perde no round-trip: o dashboard iterado na UI volta como JSON, e traduzir isso para blocos HCL a cada ajuste é exatamente onde o versionado passa a divergir do que está no ar. |
+| **Monitors espelhados em hml** | Dobraria a quantidade de alertas para vigiar um ambiente sem plantão e frequentemente fora do ar. Homologação continua coberta pelo dashboard, que alterna por template variable. |
+| **Teste sintético contra `/actuator/health/liveness`** | Era o plano original e é impossível: o actuator responde na 8081, fora do `Service`, e um teste sintético roda de fora do cluster. Publicar o actuator no NLB para viabilizá-lo exporia volume de OS e latências na internet. |
+| **Um seletor de ambiente só no dashboard** | Exigiria que métrica de negócio, APM e kube-state-metrics compartilhassem uma tag. Só `ambiente` e `env` são garantidos, e nenhum dos dois alcança o kube-state-metrics. |
 | **Prometheus + Grafana auto-hospedados** | Sem custo de licença, mas exige provisionar, dimensionar e manter o próprio armazenamento de séries num cluster de 2 nodes — e não entrega APM nem correlação log↔trace sem somar Tempo e Loki. Vira uma segunda entrega. |
 | **DogStatsD em vez de OpenMetrics** | Mais idiomático na Datadog e melhor em distribuições e percentis, mas acopla o desenvolvimento à existência de um agent: sem conta ativa, nenhuma métrica de negócio seria verificável até a véspera da demo. |
 | **Tabela de histórico de status** (em vez da coluna `situacao_alterada_em`) | Permitiria analytics no próprio banco, mas é uma tabela nova, com escrita a cada transição, para responder a uma pergunta que o dashboard já responde. |
@@ -160,8 +242,20 @@ explorer e network monitoring ficam desligados.
 - **Janela de 14 dias.** Ativar o trial perto da entrega, e não no início do
   desenvolvimento; o Terraform fica versionado e inerte até lá.
 - **Nomes de métrica divergem entre Prometheus e Datadog**
-  (`os_criadas_total` × `oficina.os.criadas`), efeito do `namespace` obrigatório
-  do check. Registrado no Javadoc dos listeners e na anotação do pod.
+  (`os_criadas_total` × `oficina.os.criadas.count`), efeito do `namespace` obrigatório do
+  check somado ao sufixo de tipo. O mapeamento explícito na anotação torna o resultado
+  determinístico, mas é mais uma tradução para manter: **acrescentar métrica de negócio
+  exige acrescentar a entrada correspondente lá**, senão ela não é raspada. Registrado no
+  Javadoc dos listeners, na anotação do pod e em `oficina-app/docs/observabilidade.md`.
+
+- **O JSON do dashboard não é validado pelo Terraform.** Erro de schema aparece só no
+  `apply`, e não no `validate` do CI. É o custo do round-trip com a UI.
+
+- **As consultas de APM e de Kubernetes só puderam ser validadas quanto à sintaxe.** O
+  MCP confirma que a definição do monitor é válida, não que a métrica existe — a
+  organização ainda não recebeu telemetria. A conferência de que `trace.servlet.request` e
+  `kubernetes.*` estão populados fica para o primeiro dia de trial, e está na checklist de
+  ativação do README.
 - **Uma porta a mais para manter.** `MANAGEMENT_SERVER_PORT` fica no
   `deployment.yaml` base, e não no `app.env` do overlay, para que não seja
   removida sem que se veja que os probes dependem dela.

@@ -40,6 +40,10 @@ Ordem de destruição: exatamente a inversa.
 | `ecr.tf` | `aws_ecr_repository` | Registry `oficina` com *scan on push* e retenção das 20 imagens mais recentes |
 | `iam-ses.tf` | `aws_iam_role` + `aws_iam_policy` | Role assumível via **IRSA** pelo ServiceAccount `oficina-api` nos namespaces `oficina-hml` e `oficina-prd`, com permissão única `ses:SendEmail` |
 | `datadog.tf` | `helm_release` | **Datadog Agent** (DaemonSet + Cluster Agent): métricas de infra, APM e coleta de logs. **Opt-in:** sem `datadog_api_key` nada é criado — ver [ADR 0003](docs/adr/0003-observabilidade-datadog.md) |
+| `datadog-api.tf` | `provider` + `locals` | Gates do stack de observabilidade. Dashboard/monitors/synthetic exigem **também** `datadog_app_key` |
+| `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog/dashboard-oficina.json`) |
+| `datadog-monitores.tf` | `datadog_monitor` ×8 | Alertas: falha de notificação, 5xx, latência p95, CPU e memória do pod, réplicas prontas, CrashLoopBackOff, erros de integração |
+| `datadog-uptime.tf` | `datadog_synthetics_test` + `datadog_service_level_objective` | Teste HTTP externo de duas regiões e SLO de disponibilidade |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
 
 ### Escalabilidade
@@ -160,6 +164,8 @@ workflow uma vez na sua branch para fixá-las.
 | Variable | `TF_STATE_BUCKET` | Nome da bucket S3 do state |
 | Variable | `AWS_REGION` | Opcional, default `us-east-1` |
 | Secret | `DATADOG_API_KEY` | **Opcional**, pode ser secret de organização. Ausente = o Datadog Agent não é instalado e o `apply` roda como antes. Preencher liga a observabilidade ([ADR 0003](docs/adr/0003-observabilidade-datadog.md)) |
+| Secret | `DATADOG_APP_KEY` | **Opcional.** *Application key* — credencial **diferente** da API key. Ausente = o agent sobe, mas dashboard, monitors, teste sintético e SLO não são criados. Escopos: `dashboards_write`, `monitors_write`, `synthetics_write`, `slos_write` |
+| Variable | `APP_PUBLIC_URL` | **Opcional.** URL do NLB da aplicação, sem barra final. Habilita o teste sintético de uptime — só existe após o primeiro deploy da aplicação |
 
 > **Bootstrap de cluster novo.** Com a chave presente, o **primeiro** `apply` de um cluster
 > que ainda não existe precisa rodar por `workflow_dispatch` com o input **`datadog: off`**.
@@ -171,6 +177,48 @@ workflow uma vez na sua branch para fixá-las.
 
 - `master` e `homologacao` protegidas: **sem push direto**, merge apenas via Pull Request com aprovação.
 - Fluxo de promoção `feature/*` → `desenvolvimento` → `homologacao` → `master`, imposto pelo job `guard` ([`pr-source-guard.yml`](.github/workflows/pr-source-guard.yml)), que deve ser marcado como *status check* obrigatório.
+
+## Observabilidade — como ligar
+
+Todo o stack é **versionado e inerte** até as chaves existirem: sem elas o `apply` roda
+exatamente como antes. A decisão está na [ADR 0003](docs/adr/0003-observabilidade-datadog.md)
+e o guia da instrumentação, em `oficina-app/docs/observabilidade.md`.
+
+Ordem de ativação, já com o cluster no ar:
+
+1. **Ativar o trial de 14 dias** na Datadog (o free tier cobre métricas de infra, mas não
+   APM nem logs). Fazer isso **perto da demo** — o relógio começa a correr aqui.
+2. **Criar as duas chaves** em *Organization Settings*: uma **API key** e uma
+   **Application key** com `dashboards_write`, `monitors_write`, `synthetics_write` e
+   `slos_write`.
+3. **Cadastrar os secrets** `DATADOG_API_KEY` e `DATADOG_APP_KEY` no repositório.
+4. **`apply`** (push na `master` ou `workflow_dispatch`). Sobem, na mesma execução, o
+   Agent no cluster e — pela API — dashboard, 8 monitors e o SLO.
+5. **Deploy da aplicação** (repo `oficina-app`), para que o `dd-java-agent`, o scrape do
+   `/actuator/prometheus` e os logs em JSON comecem a chegar.
+6. **Preencher a variable `APP_PUBLIC_URL`** com o endereço do NLB
+   (`kubectl -n oficina-prd get svc oficina-api`) e aplicar de novo: só então o teste
+   sintético de uptime é criado. O NLB nasce com o `Service`, fora do Terraform, e por
+   isso não existe antes deste ponto.
+
+Para notificar de verdade, defina `datadog_alerta_destino` (ex.: `@seu@email.com` ou
+`@slack-canal`). Vazio, os monitors disparam e ficam visíveis na UI, mas não acordam
+ninguém — é o padrão, porque *handle* inválido faz a criação do monitor falhar.
+
+### O que conferir no primeiro dia de trial
+
+As consultas foram validadas quanto à **sintaxe** (pelo MCP da Datadog), o que não prova
+que a métrica existe naquela organização. Com dado chegando, confirmar:
+
+| Conferir | Onde | Se estiver vazio |
+|---|---|---|
+| `oficina.os.criadas.count` e `oficina.os.tempo_na_situacao.sum` | *Metrics Explorer* | Scrape do OpenMetrics: revisar a anotação `ad.datadoghq.com/oficina-api.checks` |
+| `trace.servlet.request` (p95, hits, errors) | *APM > Services* | `-javaagent` e `DD_AGENT_HOST` no pod |
+| `kubernetes.memory.limits` e `kubernetes_state.deployment.replicas_ready` | *Metrics Explorer* | `kubeStateMetricsEnabled` no chart |
+| Logs com `@correlation_id` e `service:oficina-api` | *Logs* | `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` e `logs.containerCollectAll` |
+
+Cada linha vazia derruba um painel específico do dashboard — nenhuma delas derruba as
+outras.
 
 ## Custo estimado (us-east-1)
 

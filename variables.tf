@@ -100,3 +100,39 @@ variable "datadog_chart_version" {
   type        = string
   default     = "3.244.0"
 }
+
+variable "datadog_app_key" {
+  description = "APPLICATION key da Datadog. Credencial DIFERENTE da API key: a API key envia telemetria (Agent), a app key assina a escrita na API de configuracao e e o que cria dashboards, monitors, synthetics e SLO. Vazia (padrao) desliga so esses recursos - o Agent continua subindo com a API key. Escopos necessarios: dashboards_write, monitors_write, synthetics_write, slos_write."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "datadog_ambiente_monitorado" {
+  description = "Ambiente coberto pelos monitors e pelo teste sintetico. So UM: alertar em homologacao gera ruido sem ninguem de plantao, e o dashboard ja alterna entre ambientes pelo template variable. Define tambem o namespace observado (oficina-<ambiente>)."
+  type        = string
+  default     = "prd"
+
+  validation {
+    condition     = contains(["hml", "prd"], var.datadog_ambiente_monitorado)
+    error_message = "datadog_ambiente_monitorado deve ser hml ou prd (os namespaces existentes em var.app_namespaces)."
+  }
+}
+
+variable "datadog_alerta_destino" {
+  description = "Destino das notificacoes dos monitors, no formato de @mention da Datadog (@email@dominio.com, @slack-canal, @pagerduty-servico). Vazio (padrao) cria os monitors SEM notificacao: eles disparam e ficam visiveis na UI, mas nao acordam ninguem - preferivel a um handle invalido, que faz o create do monitor falhar."
+  type        = string
+  default     = ""
+}
+
+variable "datadog_latencia_p95_segundos" {
+  description = "Alvo de latencia p95 das APIs, em segundos, usado pelo monitor de latencia (warning na metade do valor). Nao ha SLA formal no desafio: 2s e o limiar a partir do qual a experiencia degrada de forma perceptivel numa API de cadastro."
+  type        = number
+  default     = 2
+}
+
+variable "app_public_url" {
+  description = "URL publica da aplicacao (NLB criado pelo Service do Kubernetes), sem barra final - ex.: http://k8s-oficina-abc123.elb.us-east-1.amazonaws.com. Vazia (padrao) desliga o teste sintetico de uptime. O endereco nasce FORA do Terraform, com o Service, entao so e conhecido apos o primeiro deploy da aplicacao: preencher no apply seguinte."
+  type        = string
+  default     = ""
+}

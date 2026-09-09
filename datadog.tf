@@ -41,7 +41,10 @@ provider "helm" {
 }
 
 resource "helm_release" "datadog" {
-  count = var.datadog_enabled && var.datadog_api_key != "" ? 1 : 0
+  # local.datadog_agent_habilitado, e nao a condicao repetida aqui: ela e a MESMA que
+  # datadog-api.tf usa como base do gate da API. Duplicada, uma mudanca em so um dos dois
+  # lados criaria dashboards para um agent que nao subiu (ou o contrario).
+  count = local.datadog_agent_habilitado ? 1 : 0
 
   name             = "datadog"
   repository       = "https://helm.datadoghq.com"
