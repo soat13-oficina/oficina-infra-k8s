@@ -150,9 +150,13 @@ explorer e network monitoring ficam desligados.
   aplicação.
 - **Cluster novo exige dois `apply`.** O provider `helm` se configura a partir de
   `module.eks`; num apply que cria o cluster do zero esses valores ainda são
-  desconhecidos no plan. Partindo do nada: um apply sem a chave (cria a
-  plataforma) e outro com ela (sobe o agent). Com o cluster já no ar, um apply
-  basta. Detalhado em `datadog.tf`.
+  desconhecidos no plan, e o provider falha ao inicializar o client
+  (`Kubernetes cluster unreachable`) **antes de criar qualquer coisa** — não é um
+  erro do qual se saia repetindo a execução. O interruptor é
+  `var.datadog_enabled` (input `datadog: off` no `workflow_dispatch`), e não a
+  presença da chave: com `DATADOG_API_KEY` como secret de **organização** ela já
+  chega preenchida no bootstrap e não serviria de gate. Com o cluster no ar — o
+  estado normal — um apply basta. Detalhado em `datadog.tf`.
 - **Janela de 14 dias.** Ativar o trial perto da entrega, e não no início do
   desenvolvimento; o Terraform fica versionado e inerte até lá.
 - **Nomes de métrica divergem entre Prometheus e Datadog**

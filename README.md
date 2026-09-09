@@ -159,7 +159,13 @@ workflow uma vez na sua branch para fixá-las.
 | Secret | `AWS_SECRET_ACCESS_KEY` | — |
 | Variable | `TF_STATE_BUCKET` | Nome da bucket S3 do state |
 | Variable | `AWS_REGION` | Opcional, default `us-east-1` |
-| Secret | `DATADOG_API_KEY` | **Opcional.** Ausente = o Datadog Agent não é instalado e o `apply` roda como antes. Preencher liga a observabilidade ([ADR 0003](docs/adr/0003-observabilidade-datadog.md)) |
+| Secret | `DATADOG_API_KEY` | **Opcional**, pode ser secret de organização. Ausente = o Datadog Agent não é instalado e o `apply` roda como antes. Preencher liga a observabilidade ([ADR 0003](docs/adr/0003-observabilidade-datadog.md)) |
+
+> **Bootstrap de cluster novo.** Com a chave presente, o **primeiro** `apply` de um cluster
+> que ainda não existe precisa rodar por `workflow_dispatch` com o input **`datadog: off`**.
+> O provider `helm` se configura a partir do `module.eks`; sem o cluster, endpoint e CA são
+> desconhecidos no plan e ele falha **antes de criar qualquer coisa**. Depois disso, o fluxo
+> normal (push na `master`) sobe o agent. Detalhes em `datadog.tf`.
 
 ### Regras de proteção de branch
 

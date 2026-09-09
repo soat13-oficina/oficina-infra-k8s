@@ -83,6 +83,12 @@ variable "datadog_api_key" {
   sensitive   = true
 }
 
+variable "datadog_enabled" {
+  description = "Liga o Datadog Agent. DESLIGUE no PRIMEIRO apply de um cluster novo: o provider helm se configura a partir do module.eks e, enquanto o cluster nao existe, o endpoint e o CA sao desconhecidos no plan. Existe separado de datadog_api_key porque, com a chave vindo de um secret de ORGANIZACAO, ela ja esta presente no apply de bootstrap e nao serve mais como interruptor."
+  type        = bool
+  default     = true
+}
+
 variable "datadog_site" {
   description = "Site da conta Datadog. datadoghq.com e o padrao (US1); contas na UE usam datadoghq.eu e enviar para o site errado faz o agent autenticar em vazio."
   type        = string

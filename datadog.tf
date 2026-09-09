@@ -11,15 +11,20 @@
 # Na pipeline a chave chega por TF_VAR_datadog_api_key, do secret DATADOG_API_KEY.
 #
 # CLUSTER NOVO EXIGE DOIS APPLIES. O provider helm abaixo se configura a partir de
-# module.eks, entao num apply que CRIA o cluster do zero o endpoint e o CA ainda sao
-# desconhecidos na hora do plan e o provider nao consegue se configurar. Ordem correta
-# partindo do nada:
+# module.eks; num apply que CRIA o cluster do zero, endpoint e CA ainda sao desconhecidos
+# no plan e o provider tenta inicializar o client sem endereco ("Kubernetes cluster
+# unreachable"). Isso falha ANTES de criar qualquer coisa - nao adianta so rodar de novo.
 #
-#   1. apply SEM a chave  -> cria VPC, EKS e node group (helm_release fica com count = 0,
-#                            o provider nunca e configurado e o problema nao aparece)
-#   2. apply COM a chave  -> o cluster ja existe, os valores sao conhecidos, o agent sobe
+# Por isso o interruptor e var.datadog_enabled, e nao a presenca da chave: com
+# DATADOG_API_KEY vindo de um secret de ORGANIZACAO, a chave ja chega preenchida no
+# bootstrap. Ordem correta partindo do nada:
 #
-# Com o cluster ja no ar - que e o caso aqui - um unico apply com a chave basta.
+#   1. workflow_dispatch action=apply, datadog=off  -> cria VPC, EKS e node group
+#                                                      (count = 0: o provider nunca e
+#                                                      configurado e o erro nao ocorre)
+#   2. push na master (datadog=on, o default)       -> cluster ja existe, o agent sobe
+#
+# Com o cluster ja no ar - o estado normal - um unico apply basta e nao ha o que desligar.
 
 provider "helm" {
   kubernetes = {
@@ -36,7 +41,7 @@ provider "helm" {
 }
 
 resource "helm_release" "datadog" {
-  count = var.datadog_api_key == "" ? 0 : 1
+  count = var.datadog_enabled && var.datadog_api_key != "" ? 1 : 0
 
   name             = "datadog"
   repository       = "https://helm.datadoghq.com"

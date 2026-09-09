@@ -21,8 +21,13 @@ name: CI/CD (plataforma Kubernetes)
 #
 # Configuracao necessaria no repositorio:
 #   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#              DATADOG_API_KEY (opcional; ausente = plataforma sem observabilidade)
 #   Variables: TF_STATE_BUCKET (bucket S3 do state)
 #              AWS_REGION (opcional, default us-east-1)
+#
+# BOOTSTRAP DE CLUSTER NOVO: o primeiro apply precisa rodar com o input datadog=off
+# (workflow_dispatch), senao o provider helm tenta se configurar a partir de um cluster
+# que ainda nao existe e o plan falha antes de criar qualquer coisa. Ver datadog.tf.
 
 on:
   pull_request:
@@ -36,6 +41,12 @@ on:
         required: true
         default: plan
         options: [plan, apply, destroy]
+      datadog:
+        description: 'Datadog Agent (desligue no PRIMEIRO apply de um cluster novo - ver datadog.tf)'
+        type: choice
+        required: false
+        default: 'on'
+        options: ['on', 'off']
 
 permissions:
   contents: read
@@ -103,6 +114,9 @@ jobs:
           # Sem o secret a variavel chega vazia e o helm_release do Datadog nao entra no
           # plano (count = 0) - o plano segue valido, apenas sem observabilidade.
           TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
+          # default e ligado; so um dispatch explicito com datadog=off desliga.
+          TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
         run: |
           terraform plan -no-color -input=false | tee plan.txt
           {
@@ -165,6 +179,9 @@ jobs:
           # helm_release nao e criado, e o apply roda exatamente como antes. Configurar o
           # secret DATADOG_API_KEY e o unico passo para ligar a observabilidade.
           TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
+          # default e ligado; so um dispatch explicito com datadog=off desliga.
+          TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
         run: terraform apply -auto-approve -no-color -input=false
 
       - name: Outputs da plataforma
@@ -220,4 +237,7 @@ jobs:
           # Precisa da mesma variavel do apply: sem ela o helm_release do Datadog sai do
           # plano de destroy e fica orfao no state, travando a remocao do node group.
           TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
+          # default e ligado; so um dispatch explicito com datadog=off desliga.
+          TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
         run: terraform destroy -auto-approve -no-color -input=false
