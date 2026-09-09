@@ -159,6 +159,7 @@ workflow uma vez na sua branch para fixá-las.
 | Secret | `AWS_SECRET_ACCESS_KEY` | — |
 | Variable | `TF_STATE_BUCKET` | Nome da bucket S3 do state |
 | Variable | `AWS_REGION` | Opcional, default `us-east-1` |
+| Secret | `DATADOG_API_KEY` | **Opcional.** Ausente = o Datadog Agent não é instalado e o `apply` roda como antes. Preencher liga a observabilidade ([ADR 0003](docs/adr/0003-observabilidade-datadog.md)) |
 
 ### Regras de proteção de branch
 
