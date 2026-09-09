@@ -36,9 +36,10 @@ Ordem de destruição: exatamente a inversa.
 | Arquivo | Recurso | O que é |
 |---|---|---|
 | `vpc.tf` | `module.vpc` | VPC `10.0.0.0/16` em 2 AZs: subnets **públicas** (NLB da API), **privadas** (worker nodes) e **de banco** (RDS), com 1 NAT Gateway |
-| `eks.tf` | `module.eks` | Cluster EKS + managed node group (2–4× `t3.small`) + add-ons `coredns`, `kube-proxy`, `vpc-cni` e **`metrics-server`** (alimenta o HPA da aplicação) |
+| `eks.tf` | `module.eks` | Cluster EKS + managed node group (2–4× `t3.medium`) + add-ons `coredns`, `kube-proxy`, `vpc-cni` e **`metrics-server`** (alimenta o HPA da aplicação) |
 | `ecr.tf` | `aws_ecr_repository` | Registry `oficina` com *scan on push* e retenção das 20 imagens mais recentes |
 | `iam-ses.tf` | `aws_iam_role` + `aws_iam_policy` | Role assumível via **IRSA** pelo ServiceAccount `oficina-api` nos namespaces `oficina-hml` e `oficina-prd`, com permissão única `ses:SendEmail` |
+| `datadog.tf` | `helm_release` | **Datadog Agent** (DaemonSet + Cluster Agent): métricas de infra, APM e coleta de logs. **Opt-in:** sem `datadog_api_key` nada é criado — ver [ADR 0003](docs/adr/0003-observabilidade-datadog.md) |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
 
 ### Escalabilidade
@@ -169,10 +170,10 @@ workflow uma vez na sua branch para fixá-las.
 | Recurso | ~US$/hora |
 |---|---|
 | EKS control plane | 0,10 |
-| 2× `t3.small` | 0,042 |
+| 2× `t3.medium` | 0,083 |
 | NAT Gateway | 0,045 |
 | NLB da API (criado pelo Service) | 0,0225 |
-| **Total desta camada** | **≈ 0,21/h (~US$ 5,00/dia)** |
+| **Total desta camada** | **≈ 0,25/h (~US$ 6,00/dia)** |
 
 Somando o RDS de hml e prd (repo do banco), o ambiente completo fica em
 **~US$ 6,30/dia**. **Não deixe ligado sem uso:** `apply` quando for usar,
@@ -200,4 +201,5 @@ O job de `destroy` já remove os Services/NLBs do cluster antes de derrubar a VP
 
 - [ADR 0001 — Separação dos states do Terraform](docs/adr/0001-separacao-dos-states.md)
 - [ADR 0002 — Plataforma compartilhada e segregação por namespace](docs/adr/0002-plataforma-compartilhada.md)
+- [ADR 0003 — Observabilidade com Datadog](docs/adr/0003-observabilidade-datadog.md)
 - Documentação da API (Swagger/Insomnia): repositório `oficina-app`
