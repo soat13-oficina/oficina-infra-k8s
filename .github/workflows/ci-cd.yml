@@ -1,4 +1,4 @@
-name: Terraform (plataforma)
+name: CI/CD (plataforma Kubernetes)
 
 # Camada de plataforma: VPC + EKS + ECR + IAM/IRSA.
 #
@@ -9,6 +9,9 @@ name: Terraform (plataforma)
 #   push master            -> apply automatico
 #   workflow_dispatch      -> plan | apply | destroy sob demanda
 #
+# Nomes de job seguem o padrao comum aos quatro repositorios do projeto:
+# validacao . plan . deploy . destroy.
+#
 # Por que apply so na master: a plataforma (rede + cluster) e COMPARTILHADA
 # pelos ambientes hml e prd, que se separam por namespace. Um unico state
 # significa um unico apply autoritativo - aplicar a partir de duas branches
@@ -18,8 +21,19 @@ name: Terraform (plataforma)
 #
 # Configuracao necessaria no repositorio:
 #   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#              DATADOG_API_KEY (opcional; ausente = plataforma sem observabilidade)
+#              DATADOG_APP_KEY (opcional; ausente = agent sobe, mas sem dashboard,
+#                               monitors, synthetic nem SLO - sao escrita na API de
+#                               configuracao e a API key nao autoriza isso)
 #   Variables: TF_STATE_BUCKET (bucket S3 do state)
 #              AWS_REGION (opcional, default us-east-1)
+#              APP_PUBLIC_URL (opcional; URL do NLB da aplicacao, sem barra final -
+#                              habilita o teste sintetico de uptime. So existe depois
+#                              do primeiro deploy da aplicacao)
+#
+# BOOTSTRAP DE CLUSTER NOVO: o primeiro apply precisa rodar com o input datadog=off
+# (workflow_dispatch), senao o provider helm tenta se configurar a partir de um cluster
+# que ainda nao existe e o plan falha antes de criar qualquer coisa. Ver datadog.tf.
 
 on:
   pull_request:
@@ -33,6 +47,12 @@ on:
         required: true
         default: plan
         options: [plan, apply, destroy]
+      datadog:
+        description: 'Datadog Agent (desligue no PRIMEIRO apply de um cluster novo - ver datadog.tf)'
+        type: choice
+        required: false
+        default: 'on'
+        options: ['on', 'off']
 
 permissions:
   contents: read
@@ -46,12 +66,12 @@ env:
 
 # Um unico state: nunca dois applies simultaneos.
 concurrency:
-  group: terraform-infra-k8s
+  group: oficina-infra-k8s
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: fmt + validate
+  validacao:
+    name: Validacao do Terraform (fmt + validate)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +92,7 @@ jobs:
 
   plan:
     name: terraform plan
-    needs: validate
+    needs: validacao
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name != 'master') || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
     runs-on: ubuntu-latest
     steps:
@@ -96,6 +116,19 @@ jobs:
 
       - name: terraform plan
         id: plan
+        env:
+          # Sem o secret a variavel chega vazia e o helm_release do Datadog nao entra no
+          # plano (count = 0) - o plano segue valido, apenas sem observabilidade.
+          TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
+          # default e ligado; so um dispatch explicito com datadog=off desliga.
+          TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
+          # Credencial SEPARADA da API key: e ela que autoriza criar dashboard, monitor,
+          # synthetic e SLO. Ausente = agent sobe, mas nada de configuracao e criado.
+          TF_VAR_datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          # Endereco publico do NLB, so conhecido depois do primeiro deploy da aplicacao.
+          # Vazio = teste sintetico de uptime nao entra no plano.
+          TF_VAR_app_public_url: ${{ vars.APP_PUBLIC_URL }}
         run: |
           terraform plan -no-color -input=false | tee plan.txt
           {
@@ -125,9 +158,9 @@ jobs:
               await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
             }
 
-  apply:
-    name: terraform apply
-    needs: validate
+  deploy:
+    name: Deploy da plataforma
+    needs: validacao
     if: (github.event_name == 'push' && github.ref_name == 'master') || (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
     runs-on: ubuntu-latest
     environment: producao
@@ -153,13 +186,28 @@ jobs:
       # Criar o EKS do zero leva ~15-20 min; o timeout do job cobre isso.
       - name: terraform apply
         timeout-minutes: 45
+        env:
+          # Habilita o Datadog Agent (datadog.tf). Secret AUSENTE = variavel vazia = o
+          # helm_release nao e criado, e o apply roda exatamente como antes. Configurar o
+          # secret DATADOG_API_KEY e o unico passo para ligar a observabilidade.
+          TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
+          # default e ligado; so um dispatch explicito com datadog=off desliga.
+          TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
+          # Dashboard, monitors, synthetic e SLO. Sao ESCRITA na API de configuracao da
+          # Datadog e exigem application key, que a API key nao substitui.
+          TF_VAR_datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          # Endereco publico do NLB (variable do repositorio). O Service e criado pelo
+          # Kubernetes, fora do Terraform, entao este valor so existe apos o primeiro
+          # deploy da aplicacao - ate la o teste sintetico de uptime fica desligado.
+          TF_VAR_app_public_url: ${{ vars.APP_PUBLIC_URL }}
         run: terraform apply -auto-approve -no-color -input=false
 
       - name: Outputs da plataforma
         run: terraform output -no-color
 
   destroy:
-    name: terraform destroy
+    name: Destroy da plataforma
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
     runs-on: ubuntu-latest
     environment: producao
@@ -204,4 +252,18 @@ jobs:
       # ANTES de rodar isto.
       - name: terraform destroy
         timeout-minutes: 45
+        env:
+          # Precisa da mesma variavel do apply: sem ela o helm_release do Datadog sai do
+          # plano de destroy e fica orfao no state, travando a remocao do node group.
+          TF_VAR_datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          # Vazio em push/PR (o contexto inputs so existe em workflow_dispatch), entao o
+          # default e ligado; so um dispatch explicito com datadog=off desliga.
+          TF_VAR_datadog_enabled: ${{ inputs.datadog != 'off' }}
+          # A app key tambem e obrigatoria AQUI, e nao so no apply. Dashboard, monitors,
+          # synthetic e SLO estao no state, e o destroy remove tudo que esta no state -
+          # independente de count. Para DELETAR qualquer um deles o provider precisa
+          # autenticar na API de configuracao, o que exige as DUAS chaves: sem a app key
+          # o destroy falha com 403 no primeiro objeto da Datadog e para no meio.
+          TF_VAR_datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          TF_VAR_app_public_url: ${{ vars.APP_PUBLIC_URL }}
         run: terraform destroy -auto-approve -no-color -input=false

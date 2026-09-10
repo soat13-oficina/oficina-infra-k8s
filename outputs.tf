@@ -73,3 +73,36 @@ output "app_namespaces" {
   description = "Namespaces de aplicacao previstos nesta plataforma (um por ambiente)."
   value       = var.app_namespaces
 }
+
+# --- Observabilidade ---------------------------------------------------------------
+# Nao sao consumidos por outros repositorios: existem para que o apply termine imprimindo
+# os links da entrega, em vez de mandar procurar na UI.
+#
+# one(recurso[*].attr) em vez de "condicao ? recurso[0].attr : null": os locals de
+# habilitacao derivam de var.datadog_api_key, que e sensitive, e o Terraform recusa output
+# que apenas TOQUE num valor sensivel - mesmo so na condicao do ternario. O splat devolve o
+# unico elemento quando count = 1 e null quando count = 0, sem passar pela chave.
+
+output "datadog_dashboard_url" {
+  description = "URL do dashboard da Datadog. null quando o stack de observabilidade esta desligado."
+  value       = one(datadog_dashboard_json.oficina[*].url)
+}
+
+output "datadog_monitores" {
+  description = "ID de cada monitor criado, para conferir a entrega sem abrir a UI. Todos null com o stack desligado."
+  value = {
+    notificacao_falha_definitiva = one(datadog_monitor.notificacao_falha_definitiva[*].id)
+    api_erro_5xx                 = one(datadog_monitor.api_erro_5xx[*].id)
+    api_latencia_p95             = one(datadog_monitor.api_latencia_p95[*].id)
+    pod_memoria                  = one(datadog_monitor.pod_memoria[*].id)
+    pod_cpu                      = one(datadog_monitor.pod_cpu[*].id)
+    replicas_prontas             = one(datadog_monitor.replicas_prontas[*].id)
+    crashloop                    = one(datadog_monitor.crashloop[*].id)
+    erros_integracao             = one(datadog_monitor.erros_integracao[*].id)
+  }
+}
+
+output "datadog_synthetic_uptime_id" {
+  description = "ID publico do teste sintetico de uptime. null enquanto var.app_public_url nao for preenchida."
+  value       = one(datadog_synthetics_test.uptime_api[*].id)
+}
