@@ -29,9 +29,9 @@ variable "vpc_cidr" {
 }
 
 variable "node_instance_type" {
-  description = "Tipo de instancia dos worker nodes."
+  description = "Tipo de instancia dos worker nodes. t3.medium (e nao t3.small) porque o DaemonSet do Datadog roda em TODO node e o t3.small nao cabe: ~1.5 GiB alocaveis contra 2x384Mi so de producao mais ~288Mi de agent+trace-agent, sem contar coredns e kube-proxy."
   type        = string
-  default     = "t3.small"
+  default     = "t3.medium"
 }
 
 variable "node_min_size" {
@@ -71,4 +71,68 @@ variable "app_service_account" {
   description = "Nome do ServiceAccount da aplicacao dentro de cada namespace (deve casar com os manifestos do repo da aplicacao)."
   type        = string
   default     = "oficina-api"
+}
+
+# --- Observabilidade (Datadog) ------------------------------------------------------
+# Ver datadog.tf e docs/adr/0003-observabilidade-datadog.md.
+
+variable "datadog_api_key" {
+  description = "API key da Datadog. Vazio (padrao) DESLIGA todo o stack de observabilidade - o helm_release nao e criado. Preencher so quando o trial de 14 dias for ativado, perto da demo."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "datadog_enabled" {
+  description = "Liga o Datadog Agent. DESLIGUE no PRIMEIRO apply de um cluster novo: o provider helm se configura a partir do module.eks e, enquanto o cluster nao existe, o endpoint e o CA sao desconhecidos no plan. Existe separado de datadog_api_key porque, com a chave vindo de um secret de ORGANIZACAO, ela ja esta presente no apply de bootstrap e nao serve mais como interruptor."
+  type        = bool
+  default     = true
+}
+
+variable "datadog_site" {
+  description = "Site da conta Datadog. datadoghq.com e o padrao (US1); contas na UE usam datadoghq.eu e enviar para o site errado faz o agent autenticar em vazio."
+  type        = string
+  default     = "datadoghq.com"
+}
+
+variable "datadog_chart_version" {
+  description = "Versao do chart Helm do Datadog. Fixada para que dois applies do mesmo commit instalem a mesma coisa."
+  type        = string
+  default     = "3.244.0"
+}
+
+variable "datadog_app_key" {
+  description = "APPLICATION key da Datadog. Credencial DIFERENTE da API key: a API key envia telemetria (Agent), a app key assina a escrita na API de configuracao e e o que cria dashboards, monitors, synthetics e SLO. Vazia (padrao) desliga so esses recursos - o Agent continua subindo com a API key. Escopos necessarios: dashboards_write, monitors_write, synthetics_write, slos_write."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "datadog_ambiente_monitorado" {
+  description = "Ambiente coberto pelos monitors e pelo teste sintetico. So UM: alertar em homologacao gera ruido sem ninguem de plantao, e o dashboard ja alterna entre ambientes pelo template variable. Define tambem o namespace observado (oficina-<ambiente>)."
+  type        = string
+  default     = "prd"
+
+  validation {
+    condition     = contains(["hml", "prd"], var.datadog_ambiente_monitorado)
+    error_message = "datadog_ambiente_monitorado deve ser hml ou prd (os namespaces existentes em var.app_namespaces)."
+  }
+}
+
+variable "datadog_alerta_destino" {
+  description = "Destino das notificacoes dos monitors, no formato de @mention da Datadog (@email@dominio.com, @slack-canal, @pagerduty-servico). Vazio (padrao) cria os monitors SEM notificacao: eles disparam e ficam visiveis na UI, mas nao acordam ninguem - preferivel a um handle invalido, que faz o create do monitor falhar."
+  type        = string
+  default     = ""
+}
+
+variable "datadog_latencia_p95_segundos" {
+  description = "Alvo de latencia p95 das APIs, em segundos, usado pelo monitor de latencia (warning na metade do valor). Nao ha SLA formal no desafio: 2s e o limiar a partir do qual a experiencia degrada de forma perceptivel numa API de cadastro."
+  type        = number
+  default     = 2
+}
+
+variable "app_public_url" {
+  description = "URL publica da aplicacao (NLB criado pelo Service do Kubernetes), sem barra final - ex.: http://k8s-oficina-abc123.elb.us-east-1.amazonaws.com. Vazia (padrao) desliga o teste sintetico de uptime. O endereco nasce FORA do Terraform, com o Service, entao so e conhecido apos o primeiro deploy da aplicacao: preencher no apply seguinte."
+  type        = string
+  default     = ""
 }

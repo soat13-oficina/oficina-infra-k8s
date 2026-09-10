@@ -6,6 +6,20 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    # Instala o Datadog Agent no cluster (datadog.tf). A partir do 3.x a conexao com o
+    # Kubernetes e um ATRIBUTO (kubernetes = { ... }), nao mais um bloco aninhado - com
+    # "~> 2.0" o provider block de datadog.tf nao parseia.
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 3.0"
+    }
+    # Dashboards, monitors, synthetics e SLO (datadog-*.tf). Note que este provider fala
+    # com a API da Datadog, e nao com o cluster: ele funciona - e e planejado - mesmo com o
+    # EKS inteiro fora do ar, o que e justamente o que se quer de um monitor.
+    datadog = {
+      source  = "DataDog/datadog"
+      version = "~> 3.0"
+    }
   }
 
   # Backend parcial: bucket e region vem de backend.hcl (nao versionado).
