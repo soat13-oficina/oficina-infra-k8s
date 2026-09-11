@@ -41,7 +41,7 @@ Ordem de destruição: exatamente a inversa.
 | `iam-ses.tf` | `aws_iam_role` + `aws_iam_policy` | Role assumível via **IRSA** pelo ServiceAccount `oficina-api` nos namespaces `oficina-hml` e `oficina-prd`, com permissão única `ses:SendEmail` |
 | `datadog.tf` | `helm_release` | **Datadog Agent** (DaemonSet + Cluster Agent): métricas de infra, APM e coleta de logs. **Opt-in:** sem `datadog_api_key` nada é criado — ver [ADR 0003](docs/adr/0003-observabilidade-datadog.md) |
 | `datadog-api.tf` | `provider` + `locals` | Gates do stack de observabilidade. Dashboard/monitors/synthetic exigem **também** `datadog_app_key` |
-| `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog/dashboard-oficina.json`) |
+| `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog-dashboards/dashboard-oficina.json`) |
 | `datadog-monitores.tf` | `datadog_monitor` ×8 | Alertas: falha de notificação, 5xx, latência p95, CPU e memória do pod, réplicas prontas, CrashLoopBackOff, erros de integração |
 | `datadog-uptime.tf` | `datadog_synthetics_test` + `datadog_service_level_objective` | Teste HTTP externo de duas regiões e SLO de disponibilidade |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
