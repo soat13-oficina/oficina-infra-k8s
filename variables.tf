@@ -109,9 +109,9 @@ variable "datadog_app_key" {
 }
 
 variable "datadog_ambiente_monitorado" {
-  description = "Ambiente coberto pelos monitors e pelo teste sintetico. So UM: alertar em homologacao gera ruido sem ninguem de plantao, e o dashboard ja alterna entre ambientes pelo template variable. Define tambem o namespace observado (oficina-<ambiente>)."
+  description = "Ambiente coberto pelos monitors e pelo teste sintetico. So UM: alertar em dois ambientes gera ruido sem ninguem de plantao, e o dashboard ja alterna entre eles pelo template variable. Define tambem o namespace observado (oficina-<ambiente>). Vale hml enquanto so esse ambiente estiver provisionado - monitor sobre namespace vazio nao coleta nada; volte para prd quando producao subir."
   type        = string
-  default     = "prd"
+  default     = "hml"
 
   validation {
     condition     = contains(["hml", "prd"], var.datadog_ambiente_monitorado)

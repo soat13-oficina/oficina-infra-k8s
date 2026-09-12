@@ -10,13 +10,13 @@
 #
 # O preco e que o Terraform nao valida o conteudo: erro de schema so aparece no apply.
 #
-# datadog/dashboard-oficina.json cobre os tres itens que a tarefa pede em dashboard
+# datadog-dashboards/dashboard-oficina.json cobre os tres itens que a tarefa pede em dashboard
 # (volume diario de OS, tempo medio por status, erros nas integracoes) e mais latencia,
 # CPU/memoria e uptime, para que a demo inteira caiba numa tela so.
 resource "datadog_dashboard_json" "oficina" {
   count = local.datadog_api_habilitada ? 1 : 0
 
-  dashboard = templatefile("${path.module}/datadog/dashboard-oficina.json", {
+  dashboard = templatefile("${path.module}/datadog-dashboards/dashboard-oficina.json", {
     # O widget de SLO referencia o objeto por ID, que so existe depois do apply. E a unica
     # coisa que o JSON nao consegue trazer pronta do repositorio.
     slo_id = datadog_service_level_objective.disponibilidade_api[0].id
