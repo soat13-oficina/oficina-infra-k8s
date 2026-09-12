@@ -41,7 +41,7 @@ Ordem de destruição: exatamente a inversa.
 | `iam-ses.tf` | `aws_iam_role` + `aws_iam_policy` | Role assumível via **IRSA** pelo ServiceAccount `oficina-api` nos namespaces `oficina-hml` e `oficina-prd`, com permissão única `ses:SendEmail` |
 | `datadog.tf` | `helm_release` | **Datadog Agent** (DaemonSet + Cluster Agent): métricas de infra, APM e coleta de logs. **Opt-in:** sem `datadog_api_key` nada é criado — ver [ADR 0003](docs/adr/0003-observabilidade-datadog.md) |
 | `datadog-api.tf` | `provider` + `locals` | Gates do stack de observabilidade. Dashboard/monitors/synthetic exigem **também** `datadog_app_key` |
-| `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog/dashboard-oficina.json`) |
+| `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog-dashboards/dashboard-oficina.json`) |
 | `datadog-monitores.tf` | `datadog_monitor` ×8 | Alertas: falha de notificação, 5xx, latência p95, CPU e memória do pod, réplicas prontas, CrashLoopBackOff, erros de integração |
 | `datadog-uptime.tf` | `datadog_synthetics_test` + `datadog_service_level_objective` | Teste HTTP externo de duas regiões e SLO de disponibilidade |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
@@ -257,4 +257,18 @@ O job de `destroy` já remove os Services/NLBs do cluster antes de derrubar a VP
 - [ADR 0001 — Separação dos states do Terraform](docs/adr/0001-separacao-dos-states.md)
 - [ADR 0002 — Plataforma compartilhada e segregação por namespace](docs/adr/0002-plataforma-compartilhada.md)
 - [ADR 0003 — Observabilidade com Datadog](docs/adr/0003-observabilidade-datadog.md)
-- Documentação da API (Swagger/Insomnia): repositório `oficina-app`
+- [Diagrama de componentes — visão de nuvem do sistema](https://github.com/soat13-oficina/oficina-app/blob/master/docs/arquitetura/diagrama-componentes.md)
+- [RFC 0001 — Escolha da nuvem](https://github.com/soat13-oficina/oficina-app/blob/master/docs/rfc/0001-escolha-da-nuvem.md)
+
+### API
+
+Este repositório **não expõe API** — entrega o cluster vazio, pronto para
+receber deploys. A documentação da API que roda nele fica em `oficina-app`:
+
+| O quê | Onde |
+|---|---|
+| **Swagger UI** | `<api_gateway_url>/swagger-ui/index.html` |
+| **Contrato OpenAPI** | `<api_gateway_url>/v3/api-docs` |
+| **Collection do Insomnia** | [`oficina-app/docs/collections/oficina-api.insomnia.json`](https://github.com/soat13-oficina/oficina-app/blob/master/docs/collections/oficina-api.insomnia.json) |
+
+O `<api_gateway_url>` é output do repositório `oficina-lambda-auth`.
