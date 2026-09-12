@@ -257,4 +257,18 @@ O job de `destroy` já remove os Services/NLBs do cluster antes de derrubar a VP
 - [ADR 0001 — Separação dos states do Terraform](docs/adr/0001-separacao-dos-states.md)
 - [ADR 0002 — Plataforma compartilhada e segregação por namespace](docs/adr/0002-plataforma-compartilhada.md)
 - [ADR 0003 — Observabilidade com Datadog](docs/adr/0003-observabilidade-datadog.md)
-- Documentação da API (Swagger/Insomnia): repositório `oficina-app`
+- [Diagrama de componentes — visão de nuvem do sistema](https://github.com/soat13-oficina/oficina-app/blob/master/docs/arquitetura/diagrama-componentes.md)
+- [RFC 0001 — Escolha da nuvem](https://github.com/soat13-oficina/oficina-app/blob/master/docs/rfc/0001-escolha-da-nuvem.md)
+
+### API
+
+Este repositório **não expõe API** — entrega o cluster vazio, pronto para
+receber deploys. A documentação da API que roda nele fica em `oficina-app`:
+
+| O quê | Onde |
+|---|---|
+| **Swagger UI** | `<api_gateway_url>/swagger-ui/index.html` |
+| **Contrato OpenAPI** | `<api_gateway_url>/v3/api-docs` |
+| **Collection do Insomnia** | [`oficina-app/docs/collections/oficina-api.insomnia.json`](https://github.com/soat13-oficina/oficina-app/blob/master/docs/collections/oficina-api.insomnia.json) |
+
+O `<api_gateway_url>` é output do repositório `oficina-lambda-auth`.
