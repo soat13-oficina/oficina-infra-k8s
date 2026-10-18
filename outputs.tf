@@ -54,19 +54,19 @@ output "oidc_provider_arn" {
   value       = module.eks.oidc_provider_arn
 }
 
+output "oidc_provider" {
+  description = "Emissor OIDC do cluster SEM o https:// - a chave das condicoes (<emissor>:sub, <emissor>:aud) da trust policy das roles IRSA dos servicos."
+  value       = module.eks.oidc_provider
+}
+
 output "configure_kubectl" {
   description = "Comando para apontar o kubectl para o cluster."
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }
 
-output "ecr_repository_url" {
-  description = "URL do repositorio ECR para push/pull das imagens da aplicacao."
-  value       = aws_ecr_repository.app.repository_url
-}
-
-output "ses_role_arn" {
-  description = "ARN da IAM Role (IRSA) com permissao ses:SendEmail, anotada no ServiceAccount da aplicacao."
-  value       = aws_iam_role.ses_send_email.arn
+output "alb_controller_role_arn" {
+  description = "ARN da IAM Role (IRSA) do AWS Load Balancer Controller."
+  value       = aws_iam_role.alb_controller.arn
 }
 
 output "app_namespaces" {
@@ -89,14 +89,14 @@ output "datadog_dashboard_url" {
 }
 
 output "datadog_monitores" {
-  description = "ID de cada monitor criado, para conferir a entrega sem abrir a UI. Todos null com o stack desligado."
+  description = "ID de cada monitor criado, para conferir a entrega sem abrir a UI. Os por servico saem como mapa servico => id; todos vazios/null com o stack desligado."
   value = {
     notificacao_falha_definitiva = one(datadog_monitor.notificacao_falha_definitiva[*].id)
-    api_erro_5xx                 = one(datadog_monitor.api_erro_5xx[*].id)
-    api_latencia_p95             = one(datadog_monitor.api_latencia_p95[*].id)
-    pod_memoria                  = one(datadog_monitor.pod_memoria[*].id)
-    pod_cpu                      = one(datadog_monitor.pod_cpu[*].id)
-    replicas_prontas             = one(datadog_monitor.replicas_prontas[*].id)
+    api_erro_5xx                 = { for servico, monitor in datadog_monitor.api_erro_5xx : servico => monitor.id }
+    api_latencia_p95             = { for servico, monitor in datadog_monitor.api_latencia_p95 : servico => monitor.id }
+    pod_memoria                  = { for servico, monitor in datadog_monitor.pod_memoria : servico => monitor.id }
+    pod_cpu                      = { for servico, monitor in datadog_monitor.pod_cpu : servico => monitor.id }
+    replicas_prontas             = { for servico, monitor in datadog_monitor.replicas_prontas : servico => monitor.id }
     crashloop                    = one(datadog_monitor.crashloop[*].id)
     erros_integracao             = one(datadog_monitor.erros_integracao[*].id)
   }

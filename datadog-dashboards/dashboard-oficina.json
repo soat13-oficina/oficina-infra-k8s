@@ -15,6 +15,18 @@
       "prefix": "kube_namespace",
       "available_values": ["oficina-prd", "oficina-hml"],
       "default": "oficina-prd"
+    },
+    {
+      "name": "service",
+      "prefix": "service",
+      "available_values": ["oficina-api", "oficina-billing-service", "oficina-execution-service"],
+      "default": "oficina-api"
+    },
+    {
+      "name": "kube_deployment",
+      "prefix": "kube_deployment",
+      "available_values": ["oficina-api", "oficina-billing-service", "oficina-execution-service"],
+      "default": "oficina-api"
     }
   ],
   "widgets": [
@@ -198,17 +210,17 @@
                     {
                       "name": "p50",
                       "data_source": "metrics",
-                      "query": "p50:trace.servlet.request{$env,service:oficina-api}"
+                      "query": "p50:trace.servlet.request{$env,$service}"
                     },
                     {
                       "name": "p95",
                       "data_source": "metrics",
-                      "query": "p95:trace.servlet.request{$env,service:oficina-api}"
+                      "query": "p95:trace.servlet.request{$env,$service}"
                     },
                     {
                       "name": "p99",
                       "data_source": "metrics",
-                      "query": "p99:trace.servlet.request{$env,service:oficina-api}"
+                      "query": "p99:trace.servlet.request{$env,$service}"
                     }
                   ],
                   "formulas": [
@@ -243,7 +255,7 @@
                     {
                       "name": "hits",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.hits{$env,service:oficina-api}.as_count()",
+                      "query": "sum:trace.servlet.request.hits{$env,$service}.as_count()",
                       "aggregator": "sum"
                     }
                   ],
@@ -266,13 +278,13 @@
                     {
                       "name": "erros",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.errors{$env,service:oficina-api}.as_count()",
+                      "query": "sum:trace.servlet.request.errors{$env,$service}.as_count()",
                       "aggregator": "sum"
                     },
                     {
                       "name": "total",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.hits{$env,service:oficina-api}.as_count()",
+                      "query": "sum:trace.servlet.request.hits{$env,$service}.as_count()",
                       "aggregator": "sum"
                     }
                   ],
@@ -298,7 +310,7 @@
                     {
                       "name": "lentos",
                       "data_source": "metrics",
-                      "query": "p95:trace.servlet.request{$env,service:oficina-api} by {resource_name}",
+                      "query": "p95:trace.servlet.request{$env,$service} by {resource_name}",
                       "aggregator": "avg"
                     }
                   ],
@@ -324,7 +336,7 @@
                     {
                       "name": "erros",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.errors{$env,service:oficina-api} by {resource_name}.as_count()",
+                      "query": "sum:trace.servlet.request.errors{$env,$service} by {resource_name}.as_count()",
                       "aggregator": "sum"
                     }
                   ],
@@ -364,7 +376,7 @@
                     {
                       "name": "uso",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.cpu.usage.total{$kube_namespace,kube_deployment:oficina-api} by {pod_name}"
+                      "query": "avg:kubernetes.cpu.usage.total{$kube_namespace,$kube_deployment} by {pod_name}"
                     }
                   ],
                   "formulas": [{ "formula": "uso / 1000000000", "alias": "uso (cores)" }],
@@ -377,7 +389,7 @@
                     {
                       "name": "limite",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.cpu.limits{$kube_namespace,kube_deployment:oficina-api}"
+                      "query": "avg:kubernetes.cpu.limits{$kube_namespace,$kube_deployment}"
                     }
                   ],
                   "formulas": [{ "formula": "limite", "alias": "limite (cores)" }],
@@ -402,7 +414,7 @@
                     {
                       "name": "uso",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.memory.usage{$kube_namespace,kube_deployment:oficina-api} by {pod_name}"
+                      "query": "avg:kubernetes.memory.usage{$kube_namespace,$kube_deployment} by {pod_name}"
                     }
                   ],
                   "formulas": [{ "formula": "uso", "alias": "uso" }],
@@ -415,7 +427,7 @@
                     {
                       "name": "limite",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.memory.limits{$kube_namespace,kube_deployment:oficina-api}"
+                      "query": "avg:kubernetes.memory.limits{$kube_namespace,$kube_deployment}"
                     }
                   ],
                   "formulas": [{ "formula": "limite", "alias": "limite" }],
@@ -439,7 +451,7 @@
                     {
                       "name": "prontas",
                       "data_source": "metrics",
-                      "query": "sum:kubernetes_state.deployment.replicas_ready{$kube_namespace,kube_deployment:oficina-api}",
+                      "query": "sum:kubernetes_state.deployment.replicas_ready{$kube_namespace,$kube_deployment}",
                       "aggregator": "last"
                     }
                   ],
@@ -535,7 +547,7 @@
                   "response_format": "event_list",
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "service:oficina-api $env (status:error OR @log.level:ERROR)",
+                    "query_string": "$service $env (status:error OR @log.level:ERROR)",
                     "indexes": [],
                     "storage": "hot"
                   },
