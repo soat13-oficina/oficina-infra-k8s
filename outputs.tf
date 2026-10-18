@@ -102,6 +102,19 @@ output "datadog_monitores" {
   }
 }
 
+output "datadog_monitores_saga" {
+  description = "ID dos monitors da Saga, da mensageria e do pagamento (datadog-saga.tf). Todos null com o stack desligado."
+  value = {
+    dlq_com_mensagem             = one(datadog_monitor.dlq_com_mensagem[*].id)
+    saga_presa                   = one(datadog_monitor.saga_presa[*].id)
+    falha_compensacao            = one(datadog_monitor.falha_compensacao[*].id)
+    compensacoes_acima_do_normal = one(datadog_monitor.compensacoes_acima_do_normal[*].id)
+    outbox_parado                = one(datadog_monitor.outbox_parado[*].id)
+    outbox_esgotado              = one(datadog_monitor.outbox_esgotado[*].id)
+    webhook_mercadopago          = one(datadog_monitor.webhook_mercadopago_recusado[*].id)
+  }
+}
+
 output "datadog_synthetic_uptime_id" {
   description = "ID publico do teste sintetico de uptime. null enquanto var.app_public_url nao for preenchida."
   value       = one(datadog_synthetics_test.uptime_api[*].id)

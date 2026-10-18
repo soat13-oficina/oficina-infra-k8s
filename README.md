@@ -44,6 +44,7 @@ Ordem de destruição: exatamente a inversa.
 | `datadog-api.tf` | `provider` + `locals` | Gates do stack de observabilidade. Dashboard/monitors/synthetic exigem **também** `datadog_app_key` |
 | `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog-dashboards/dashboard-oficina.json`) |
 | `datadog-monitores.tf` | `datadog_monitor` | Alertas **por serviço** (`var.servicos`, `for_each`): 5xx, latência p95, CPU e memória do pod, réplicas prontas; e únicos: falha de notificação, CrashLoopBackOff, erros de integração |
+| `datadog-saga.tf` | `datadog_monitor` ×7 | Alertas do sistema (não de um serviço): mensagem na DLQ, saga presa, compensação esgotada (`FALHA_COMPENSACAO`), taxa de compensação alta, outbox parado ou esgotado e webhook do Mercado Pago recusado |
 | `datadog-uptime.tf` | `datadog_synthetics_test` + `datadog_service_level_objective` | Teste HTTP externo de duas regiões e SLO de disponibilidade |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
 
@@ -196,7 +197,7 @@ Ordem de ativação, já com o cluster no ar:
    `slos_write`.
 3. **Cadastrar os secrets** `DATADOG_API_KEY` e `DATADOG_APP_KEY` no repositório.
 4. **`apply`** (push na `master` ou `workflow_dispatch`). Sobem, na mesma execução, o
-   Agent no cluster e — pela API — dashboard, os monitors (5 por serviço mais 3 únicos) e o SLO.
+   Agent no cluster e — pela API — dashboard (inclui o grupo "Saga, mensageria e pagamentos"), os monitors (5 por serviço, 3 únicos e 7 da Saga) e o SLO.
 5. **Deploy da aplicação** (repo `oficina-app`), para que o `dd-java-agent`, o scrape do
    `/actuator/prometheus` e os logs em JSON comecem a chegar.
 6. **Preencher a variable `APP_PUBLIC_URL`** com a URL do API Gateway (output
