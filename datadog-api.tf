@@ -19,8 +19,8 @@ locals {
   # datadog-*.tf vizinhos declaram fica com count = 0 e o apply segue normalmente.
   datadog_api_habilitada = local.datadog_agent_habilitado && var.datadog_app_key != ""
 
-  # Teste sintetico depende ainda do endereco publico do NLB, que nasce com o Service do
-  # Kubernetes (fora do Terraform) e so e conhecido depois do primeiro deploy da aplicacao.
+  # Teste sintetico depende ainda do endereco publico do sistema (API Gateway), que nasce em outro
+  # repositorio (oficina-lambda-auth) e so e conhecido depois do deploy dos servicos.
   datadog_uptime_habilitado = local.datadog_api_habilitada && var.app_public_url != ""
 
   # Sufixo de destino das notificacoes. Vazio = monitor criado sem @mention: ele muda de
@@ -30,12 +30,22 @@ locals {
 
   # Tags comuns a todo objeto criado aqui. "terraform:true" e o marcador que separa o que e
   # versionado do que alguem criou clicando na UI durante a demo.
+  #
+  # SEM a tag service: ela depende do monitor. Os por servico (for_each em datadog-monitores.tf) a
+  # acrescentam com o proprio nome; os de negocio do OS usam local.datadog_tags_os.
   datadog_tags = [
-    "service:oficina-api",
     "env:${var.datadog_ambiente_monitorado}",
     "project:${var.project}",
     "terraform:true",
   ]
+
+  datadog_tags_os = concat(local.datadog_tags, ["service:oficina-api"])
+
+  # Um monitor de cada tipo POR SERVICO (var.servicos). Vazio sem as chaves, como o count = 0 dos demais.
+  #
+  # nonsensitive: o gate deriva das chaves (sensitive) e o Terraform recusa for_each que as toque. O que
+  # vira chave de instancia e o NOME DO SERVICO, nao a chave; o booleano "ha chave ou nao" nao e segredo.
+  datadog_servicos_monitorados = nonsensitive(local.datadog_api_habilitada) ? toset(var.servicos) : toset([])
 
   # Namespace do ambiente monitorado pelos monitors de Kubernetes. Os namespaces sao
   # oficina-hml e oficina-prd (var.app_namespaces) e o sufixo casa com o nome do ambiente.

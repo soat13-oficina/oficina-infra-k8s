@@ -3,9 +3,14 @@
 # Cobrem os quatro sinais que a tarefa pede alerta: latencia das APIs, CPU/memoria no
 # Kubernetes, healthcheck/uptime e falhas no processamento de ordens de servico.
 #
-# UM AMBIENTE SO (var.datadog_ambiente_monitorado, default prd). Duplicar tudo em hml
+# UM AMBIENTE SO (var.datadog_ambiente_monitorado, default hml). Duplicar tudo em hml
 # dobraria o numero de monitors para vigiar um ambiente onde ninguem esta de plantao e que
 # nem sempre esta no ar. O dashboard, esse sim, alterna entre ambientes.
+#
+# POR SERVICO (var.servicos): os monitors 2 a 6 (erro 5xx, latencia, memoria, CPU, replicas) existem
+# uma vez para cada servico (for_each), com o nome [oficina][<servico>]. Os de negocio do OS (1 e 8) e o
+# de CrashLoop (namespace inteiro) existem uma vez so. Os da Saga e das DLQs ficam em
+# datadog-saga.tf.
 #
 # O QUE NAO ESTA AQUI, DE PROPOSITO: RegraDeNegocioException. Ela vira 4xx e e uso normal
 # da API - cliente inexistente, transicao invalida de OS. Alertar nela acorda alguem por
@@ -63,7 +68,7 @@ resource "datadog_monitor" "notificacao_falha_definitiva" {
   renotify_interval = 60
   include_tags      = true
 
-  tags = concat(local.datadog_tags, ["signal:negocio"])
+  tags = concat(local.datadog_tags_os, ["signal:negocio"])
 }
 
 # --- 2. Erro 5xx nas APIs -----------------------------------------------------------
@@ -72,21 +77,21 @@ resource "datadog_monitor" "notificacao_falha_definitiva" {
 # ruido de rede. trace.servlet.request vem do dd-java-agent (autoinstrumentacao), sem
 # nenhuma linha de codigo na aplicacao.
 resource "datadog_monitor" "api_erro_5xx" {
-  count = local.datadog_api_habilitada ? 1 : 0
+  for_each = local.datadog_servicos_monitorados
 
-  name = "[oficina][${var.datadog_ambiente_monitorado}] Taxa de erro 5xx na API acima do aceitavel"
+  name = "[oficina][${each.key}] Taxa de erro 5xx acima do aceitavel (${var.datadog_ambiente_monitorado})"
   type = "query alert"
 
   query = join("", [
     "sum(last_10m):100 * ( ",
-    "sum:trace.servlet.request.errors{service:oficina-api,env:${var.datadog_ambiente_monitorado}}.as_count() / ",
-    "sum:trace.servlet.request.hits{service:oficina-api,env:${var.datadog_ambiente_monitorado}}.as_count()",
+    "sum:trace.servlet.request.errors{service:${each.key},env:${var.datadog_ambiente_monitorado}}.as_count() / ",
+    "sum:trace.servlet.request.hits{service:${each.key},env:${var.datadog_ambiente_monitorado}}.as_count()",
     " ) > 5",
   ])
 
   message = <<-EOT
     {{#is_alert}}
-    {{value}}% das requisicoes da API estao retornando 5xx nos ultimos 10 minutos.
+    {{value}}% das requisicoes de ${each.key} estao retornando 5xx nos ultimos 10 minutos.
     {{/is_alert}}
     {{#is_warning}}
     Erros 5xx subindo: {{value}}% das requisicoes nos ultimos 10 minutos.
@@ -96,7 +101,7 @@ resource "datadog_monitor" "api_erro_5xx" {
     4xx, que na oficina e regra de negocio (transicao invalida de OS, cadastro duplicado) e
     NAO gera alerta.
 
-    **Onde olhar:** APM > Error Tracking do `service:oficina-api`; do trace, pule para o log
+    **Onde olhar:** APM > Error Tracking do `service:${each.key}`; do trace, pule para o log
     pelo `dd.trace_id` (DD_LOGS_INJECTION ja injeta no MDC).${local.datadog_notificacao}
   EOT
 
@@ -111,7 +116,7 @@ resource "datadog_monitor" "api_erro_5xx" {
   renotify_interval = 30
   include_tags      = true
 
-  tags = concat(local.datadog_tags, ["signal:api"])
+  tags = concat(local.datadog_tags, ["signal:api", "service:${each.key}"])
 }
 
 # --- 3. Latencia das APIs -----------------------------------------------------------
@@ -119,16 +124,16 @@ resource "datadog_monitor" "api_erro_5xx" {
 # Item "latencia das APIs". p95 e nao media: a media esconde justamente a cauda que o
 # usuario sente. O alvo e var.datadog_latencia_p95_segundos, com warning na metade.
 resource "datadog_monitor" "api_latencia_p95" {
-  count = local.datadog_api_habilitada ? 1 : 0
+  for_each = local.datadog_servicos_monitorados
 
-  name = "[oficina][${var.datadog_ambiente_monitorado}] Latencia p95 da API acima do alvo"
+  name = "[oficina][${each.key}] Latencia p95 acima do alvo (${var.datadog_ambiente_monitorado})"
   type = "query alert"
 
-  query = "avg(last_10m):p95:trace.servlet.request{service:oficina-api,env:${var.datadog_ambiente_monitorado}} > ${var.datadog_latencia_p95_segundos}"
+  query = "avg(last_10m):p95:trace.servlet.request{service:${each.key},env:${var.datadog_ambiente_monitorado}} > ${var.datadog_latencia_p95_segundos}"
 
   message = <<-EOT
     {{#is_alert}}
-    O p95 de latencia da API esta em {{value}}s, acima do alvo de ${var.datadog_latencia_p95_segundos}s.
+    O p95 de latencia de ${each.key} esta em {{value}}s, acima do alvo de ${var.datadog_latencia_p95_segundos}s.
     {{/is_alert}}
     {{#is_warning}}
     Latencia p95 subindo: {{value}}s.
@@ -153,7 +158,7 @@ resource "datadog_monitor" "api_latencia_p95" {
   notify_no_data = false
   include_tags   = true
 
-  tags = concat(local.datadog_tags, ["signal:api"])
+  tags = concat(local.datadog_tags, ["signal:api", "service:${each.key}"])
 }
 
 # --- 4. Memoria do pod perto do limite ----------------------------------------------
@@ -163,15 +168,15 @@ resource "datadog_monitor" "api_latencia_p95" {
 # Aplicacao Java estoura o limite antes de degradar - o container e morto pelo kernel,
 # sem aviso e sem stack trace.
 resource "datadog_monitor" "pod_memoria" {
-  count = local.datadog_api_habilitada ? 1 : 0
+  for_each = local.datadog_servicos_monitorados
 
-  name = "[oficina][${var.datadog_ambiente_monitorado}] Memoria do pod perto do limite"
+  name = "[oficina][${each.key}] Memoria do pod perto do limite (${var.datadog_ambiente_monitorado})"
   type = "query alert"
 
   query = join("", [
     "avg(last_15m):100 * ( ",
-    "avg:kubernetes.memory.usage{kube_namespace:${local.datadog_kube_namespace},kube_deployment:oficina-api} by {pod_name} / ",
-    "avg:kubernetes.memory.limits{kube_namespace:${local.datadog_kube_namespace},kube_deployment:oficina-api} by {pod_name}",
+    "avg:kubernetes.memory.usage{kube_namespace:${local.datadog_kube_namespace},kube_deployment:${each.key}} by {pod_name} / ",
+    "avg:kubernetes.memory.limits{kube_namespace:${local.datadog_kube_namespace},kube_deployment:${each.key}} by {pod_name}",
     " ) > 90",
   ])
 
@@ -188,7 +193,7 @@ resource "datadog_monitor" "pod_memoria" {
 
     **Onde olhar:** o heap segue `-XX:MaxRAMPercentage=75.0`, entao subida sustentada e
     vazamento ou carga real, nao ajuste de JVM. Confira tambem a ResourceQuota do namespace
-    antes de aumentar o limite: hml tem teto de 2Gi e prd de 4Gi.${local.datadog_notificacao}
+    antes de aumentar o limite: o teto e do namespace inteiro, compartilhado pelos tres servicos (hml 2Gi, prd 5Gi).${local.datadog_notificacao}
   EOT
 
   priority = 2
@@ -202,7 +207,7 @@ resource "datadog_monitor" "pod_memoria" {
   renotify_interval = 60
   include_tags      = true
 
-  tags = concat(local.datadog_tags, ["signal:infra"])
+  tags = concat(local.datadog_tags, ["signal:infra", "service:${each.key}"])
 }
 
 # --- 5. CPU do pod perto do limite --------------------------------------------------
@@ -210,15 +215,15 @@ resource "datadog_monitor" "pod_memoria" {
 # kubernetes.cpu.usage.total vem em NANOCORES e kubernetes.cpu.limits em cores: sem o
 # / 1000000000 a conta da um percentual bilhoes de vezes maior e o monitor dispara sozinho.
 resource "datadog_monitor" "pod_cpu" {
-  count = local.datadog_api_habilitada ? 1 : 0
+  for_each = local.datadog_servicos_monitorados
 
-  name = "[oficina][${var.datadog_ambiente_monitorado}] CPU do pod perto do limite"
+  name = "[oficina][${each.key}] CPU do pod perto do limite (${var.datadog_ambiente_monitorado})"
   type = "query alert"
 
   query = join("", [
     "avg(last_15m):100 * ( ",
-    "avg:kubernetes.cpu.usage.total{kube_namespace:${local.datadog_kube_namespace},kube_deployment:oficina-api} by {pod_name} / 1000000000 / ",
-    "avg:kubernetes.cpu.limits{kube_namespace:${local.datadog_kube_namespace},kube_deployment:oficina-api} by {pod_name}",
+    "avg:kubernetes.cpu.usage.total{kube_namespace:${local.datadog_kube_namespace},kube_deployment:${each.key}} by {pod_name} / 1000000000 / ",
+    "avg:kubernetes.cpu.limits{kube_namespace:${local.datadog_kube_namespace},kube_deployment:${each.key}} by {pod_name}",
     " ) > 90",
   ])
 
@@ -247,7 +252,7 @@ resource "datadog_monitor" "pod_cpu" {
   notify_no_data = false
   include_tags   = true
 
-  tags = concat(local.datadog_tags, ["signal:infra"])
+  tags = concat(local.datadog_tags, ["signal:infra", "service:${each.key}"])
 }
 
 # --- 6. Healthcheck: replicas prontas abaixo do desejado ----------------------------
@@ -256,31 +261,31 @@ resource "datadog_monitor" "pod_cpu" {
 # readinessProbe (/actuator/health/readiness, que inclui o banco) traduzido em alerta:
 # pod que nao responde ao probe sai do balanceamento e deixa de contar como ready.
 # Cobre um caso que o teste sintetico externo NAO cobre: com 2 replicas, uma fora do ar
-# ainda devolve 200 no NLB, mas a capacidade caiu pela metade.
+# ainda devolve 200 no ALB, mas a capacidade caiu pela metade.
 resource "datadog_monitor" "replicas_prontas" {
-  count = local.datadog_api_habilitada ? 1 : 0
+  for_each = local.datadog_servicos_monitorados
 
-  name = "[oficina][${var.datadog_ambiente_monitorado}] Replicas da API abaixo do desejado"
+  name = "[oficina][${each.key}] Replicas abaixo do desejado (${var.datadog_ambiente_monitorado})"
   type = "query alert"
 
   query = join("", [
     "max(last_5m):",
-    "sum:kubernetes_state.deployment.replicas_desired{kube_deployment:oficina-api,kube_namespace:${local.datadog_kube_namespace}} - ",
-    "sum:kubernetes_state.deployment.replicas_ready{kube_deployment:oficina-api,kube_namespace:${local.datadog_kube_namespace}}",
+    "sum:kubernetes_state.deployment.replicas_desired{kube_deployment:${each.key},kube_namespace:${local.datadog_kube_namespace}} - ",
+    "sum:kubernetes_state.deployment.replicas_ready{kube_deployment:${each.key},kube_namespace:${local.datadog_kube_namespace}}",
     " >= 1",
   ])
 
   message = <<-EOT
     {{#is_alert}}
-    {{value}} replica(s) da API fora do ar ou sem passar no readinessProbe.
+    {{value}} replica(s) de ${each.key} fora do ar ou sem passar no readinessProbe.
     {{/is_alert}}
     {{#is_no_data}}
     Sem dados de kube-state-metrics ha 30 minutos: ou o Datadog Agent caiu, ou o Deployment
     nao existe mais. Nos dois casos a observabilidade do cluster esta cega.
     {{/is_no_data}}
 
-    **Impacto:** capacidade reduzida. O readinessProbe inclui o banco (grupo readiness =
-    readinessState,db), entao um RDS inacessivel derruba TODAS as replicas de uma vez.
+    **Impacto:** capacidade reduzida. O readinessProbe inclui o banco de dados do servico (readinessState + db
+    no OS e no Billing; dynamoDb na Execution), entao um banco inacessivel derruba TODAS as replicas de uma vez.
 
     **Onde olhar:** `kubectl -n ${local.datadog_kube_namespace} describe pod` para o motivo do
     probe, e o painel de CPU/memoria para descartar OOMKill.${local.datadog_notificacao}
@@ -299,7 +304,7 @@ resource "datadog_monitor" "replicas_prontas" {
   renotify_interval = 30
   include_tags      = true
 
-  tags = concat(local.datadog_tags, ["signal:infra"])
+  tags = concat(local.datadog_tags, ["signal:infra", "service:${each.key}"])
 }
 
 # --- 7. CrashLoopBackOff ------------------------------------------------------------
@@ -343,8 +348,8 @@ resource "datadog_monitor" "crashloop" {
 # --- 8. Erros nas integracoes -------------------------------------------------------
 #
 # Item "erros e falhas nas integracoes" pelo lado do ALERTA (o dashboard tem o widget).
-# Monitor de LOG, e nao de metrica: as integracoes desta aplicacao sao o Amazon SES e o
-# webhook de decisao de orcamento, e nem toda falha delas vira 5xx - o envio de e-mail e
+# Monitor de LOG, e nao de metrica: as integracoes sao o Amazon SES (OS), o webhook de decisao de
+# orcamento e o Mercado Pago (Billing), e nem toda falha delas vira 5xx - o envio de e-mail e
 # assincrono (@Async) e o webhook responde antes do processamento terminar.
 #
 # O filtro por logger cobre os dois modulos que falam com o mundo externo. A dupla
@@ -354,13 +359,13 @@ resource "datadog_monitor" "crashloop" {
 resource "datadog_monitor" "erros_integracao" {
   count = local.datadog_api_habilitada ? 1 : 0
 
-  name = "[oficina][${var.datadog_ambiente_monitorado}] Erros nas integracoes (SES / webhook de orcamento)"
+  name = "[oficina][integracoes][${var.datadog_ambiente_monitorado}] Erros nas integracoes (SES / orcamento / Mercado Pago)"
   type = "log alert"
 
   query = join("", [
-    "logs(\"service:oficina-api env:${var.datadog_ambiente_monitorado} ",
+    "logs(\"service:(oficina-api OR oficina-billing-service) env:${var.datadog_ambiente_monitorado} ",
     "(status:error OR @log.level:ERROR) ",
-    "@log.logger:(br.com.oficina.notificacao.* OR br.com.oficina.orcamento.*)\")",
+    "@log.logger:(br.com.oficina.notificacao.* OR br.com.oficina.billing.orcamento.* OR br.com.oficina.billing.pagamento.*)\")",
     ".index(\"*\").rollup(\"count\").last(\"15m\") > 3",
   ])
 
@@ -393,5 +398,5 @@ resource "datadog_monitor" "erros_integracao" {
   include_tags       = true
   enable_logs_sample = true
 
-  tags = concat(local.datadog_tags, ["signal:integracao"])
+  tags = concat(local.datadog_tags_os, ["signal:integracao"])
 }

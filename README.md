@@ -1,9 +1,11 @@
 # oficina-infra-k8s — Infraestrutura Kubernetes (Terraform)
 
-Camada de **plataforma** do Tech Challenge SOAT 13 — Fase 3. Este repositório
+Camada de **plataforma** do Tech Challenge SOAT 13 — Fases 3 e 4. Este repositório
 provisiona, na AWS e via Terraform, tudo que a aplicação precisa para rodar:
 **rede (VPC)**, **cluster Kubernetes gerenciado (EKS) com escalabilidade**,
-**registry de imagens (ECR)** e as **IAM Roles** consumidas pelos pods via IRSA.
+o **AWS Load Balancer Controller** (um ALB por ambiente para os três serviços) e a observabilidade
+(Datadog). Na Fase 4 o ECR, as roles IRSA, as filas e os bancos passaram para o `infra/` de cada serviço;
+daqui eles só precisam do `oidc_provider_arn` e do `oidc_provider`.
 
 Não contém código de aplicação nem manifestos Kubernetes — esses vivem no repo
 da aplicação. Este repositório entrega o **cluster vazio, pronto para receber
@@ -15,15 +17,15 @@ deploys**, e um conjunto de *outputs* consumido pelos demais repositórios.
 flowchart TB
     subgraph repos["Repositórios"]
         R1["oficina-lambda-auth<br/>Lambda + API Gateway"]
-        R2["<b>oficina-infra-k8s</b><br/>VPC · EKS · ECR · IAM"]
+        R2["<b>oficina-infra-k8s</b><br/>VPC · EKS · ALB controller · Datadog"]
         R3["oficina-infra-database<br/>RDS PostgreSQL"]
-        R4["oficina-app<br/>API Spring Boot"]
+        R4["oficina-app · billing · execution<br/>3 serviços Spring Boot"]
     end
 
     R2 -->|"outputs via<br/>terraform_remote_state"| R3
-    R2 -->|"cluster + ECR"| R4
+    R2 -->|"cluster + OIDC"| R4
     R3 -->|"endpoint + secret"| R4
-    R1 -->|"roteia p/ NLB público"| R4
+    R1 -->|"roteia p/ ALB (URL no SSM)"| R4
 
     style R2 fill:#2d6a4f,color:#fff,stroke:#1b4332
 ```
@@ -35,14 +37,14 @@ Ordem de destruição: exatamente a inversa.
 
 | Arquivo | Recurso | O que é |
 |---|---|---|
-| `vpc.tf` | `module.vpc` | VPC `10.0.0.0/16` em 2 AZs: subnets **públicas** (NLB da API), **privadas** (worker nodes) e **de banco** (RDS), com 1 NAT Gateway |
-| `eks.tf` | `module.eks` | Cluster EKS + managed node group (2–4× `t3.medium`) + add-ons `coredns`, `kube-proxy`, `vpc-cni` e **`metrics-server`** (alimenta o HPA da aplicação) |
-| `ecr.tf` | `aws_ecr_repository` | Registry `oficina` com *scan on push* e retenção das 20 imagens mais recentes |
-| `iam-ses.tf` | `aws_iam_role` + `aws_iam_policy` | Role assumível via **IRSA** pelo ServiceAccount `oficina-api` nos namespaces `oficina-hml` e `oficina-prd`, com permissão única `ses:SendEmail` |
+| `vpc.tf` | `module.vpc` | VPC `10.0.0.0/16` em 2 AZs: subnets **públicas** (ALB do ambiente), **privadas** (worker nodes) e **de banco** (RDS), com 1 NAT Gateway |
+| `eks.tf` | `module.eks` | Cluster EKS + managed node group (2–5× `t3.medium`) + add-ons `coredns`, `kube-proxy`, `vpc-cni` e **`metrics-server`** (alimenta o HPA da aplicação) |
+| `alb-controller.tf` | `helm_release` + role IRSA | **AWS Load Balancer Controller** (chart e política IAM oficial **fixados juntos**, `policies/`): junta os `Ingress` dos três serviços num **único ALB por ambiente** (IngressGroup `oficina-<env>`). [ADR 0008](https://github.com/soat13-oficina/oficina-app/blob/desenvolvimento/docs/adr/0008-exposicao-e-roteamento.md) |
 | `datadog.tf` | `helm_release` | **Datadog Agent** (DaemonSet + Cluster Agent): métricas de infra, APM e coleta de logs. **Opt-in:** sem `datadog_api_key` nada é criado — ver [ADR 0003](docs/adr/0003-observabilidade-datadog.md) |
 | `datadog-api.tf` | `provider` + `locals` | Gates do stack de observabilidade. Dashboard/monitors/synthetic exigem **também** `datadog_app_key` |
 | `datadog-dashboard.tf` | `datadog_dashboard_json` | Dashboard **Oficina — Ordens de Serviço e Plataforma** (`datadog-dashboards/dashboard-oficina.json`) |
-| `datadog-monitores.tf` | `datadog_monitor` ×8 | Alertas: falha de notificação, 5xx, latência p95, CPU e memória do pod, réplicas prontas, CrashLoopBackOff, erros de integração |
+| `datadog-monitores.tf` | `datadog_monitor` | Alertas **por serviço** (`var.servicos`, `for_each`): 5xx, latência p95, CPU e memória do pod, réplicas prontas; e únicos: falha de notificação, CrashLoopBackOff, erros de integração |
+| `datadog-saga.tf` | `datadog_monitor` ×7 | Alertas do sistema (não de um serviço): mensagem na DLQ, saga presa, compensação esgotada (`FALHA_COMPENSACAO`), taxa de compensação alta, outbox parado ou esgotado e webhook do Mercado Pago recusado |
 | `datadog-uptime.tf` | `datadog_synthetics_test` + `datadog_service_level_objective` | Teste HTTP externo de duas regiões e SLO de disponibilidade |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
 
@@ -50,8 +52,8 @@ Ordem de destruição: exatamente a inversa.
 
 Dois níveis, ambos exigidos pelo enunciado:
 
-- **Pods:** o `HorizontalPodAutoscaler` da aplicação (repo `oficina-app`) escala de 1 a 4 réplicas por CPU/memória. Depende do add-on `metrics-server` instalado aqui.
-- **Nodes:** o managed node group vai de `node_min_size` (2) a `node_max_size` (4) instâncias.
+- **Pods:** o `HorizontalPodAutoscaler` de cada serviço escala por CPU/memória. Depende do add-on `metrics-server` instalado aqui.
+- **Nodes:** o managed node group vai de `node_min_size` (2) a `node_max_size` (5) instâncias — o teto cobre os três serviços com os dois ambientes no pico do HPA; em repouso bastam 2.
 
 ### Ambientes
 
@@ -108,10 +110,11 @@ Ao final:
 terraform output
 # cluster_name               = "oficina"
 # configure_kubectl          = "aws eks update-kubeconfig --region us-east-1 --name oficina"
-# ecr_repository_url         = "<conta>.dkr.ecr.us-east-1.amazonaws.com/oficina"
 # database_subnet_group_name = "oficina-vpc"
 # node_security_group_id     = "sg-..."
-# ses_role_arn               = "arn:aws:iam::<conta>:role/oficina-ses-send-email"
+# oidc_provider_arn          = "arn:aws:iam::<conta>:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/..."
+# oidc_provider              = "oidc.eks.us-east-1.amazonaws.com/id/..."   # sem https://, para as trust policies IRSA
+# alb_controller_role_arn    = "arn:aws:iam::<conta>:role/oficina-aws-load-balancer-controller"
 ```
 
 ## CI/CD
@@ -135,9 +138,10 @@ Jobs, no padrão de nomes comum aos quatro repositórios do projeto:
 | `destroy` | Remove os LoadBalancers criados pelo cluster e destrói a plataforma |
 
 `concurrency: oficina-infra-k8s` garante que nunca haja dois `apply`
-concorrentes no mesmo state. O job de `destroy` remove antes os Services do
-Kubernetes — os NLBs são criados pelo cluster, fora do Terraform, e travariam a
-remoção da VPC com ENIs órfãs.
+concorrentes no mesmo state. O job de `destroy` remove antes os `Ingress` e Services do
+Kubernetes — o ALB é criado pelo controller, fora do Terraform, e travaria a
+remoção da VPC com ENIs e security groups órfãos. Os `Ingress` saem **enquanto o controller
+ainda está no cluster**: é ele quem apaga o ALB.
 
 ### Workflow auxiliar — `Formatar Terraform`
 
@@ -165,7 +169,7 @@ workflow uma vez na sua branch para fixá-las.
 | Variable | `AWS_REGION` | Opcional, default `us-east-1` |
 | Secret | `DATADOG_API_KEY` | **Opcional**, pode ser secret de organização. Ausente = o Datadog Agent não é instalado e o `apply` roda como antes. Preencher liga a observabilidade ([ADR 0003](docs/adr/0003-observabilidade-datadog.md)) |
 | Secret | `DATADOG_APP_KEY` | **Opcional.** *Application key* — credencial **diferente** da API key. Ausente = o agent sobe, mas dashboard, monitors, teste sintético e SLO não são criados. Escopos: `dashboards_write`, `monitors_write`, `synthetics_write`, `slos_write` |
-| Variable | `APP_PUBLIC_URL` | **Opcional.** URL do NLB da aplicação, sem barra final. Habilita o teste sintético de uptime — só existe após o primeiro deploy da aplicação |
+| Variable | `APP_PUBLIC_URL` | **Opcional.** URL do API Gateway (`api_gateway_url` do `oficina-lambda-auth`), sem barra final. Habilita o teste sintético de uptime — só existe após o deploy dos serviços |
 
 > **Bootstrap de cluster novo.** Com a chave presente, o **primeiro** `apply` de um cluster
 > que ainda não existe precisa rodar por `workflow_dispatch` com o input **`datadog: off`**.
@@ -193,13 +197,13 @@ Ordem de ativação, já com o cluster no ar:
    `slos_write`.
 3. **Cadastrar os secrets** `DATADOG_API_KEY` e `DATADOG_APP_KEY` no repositório.
 4. **`apply`** (push na `master` ou `workflow_dispatch`). Sobem, na mesma execução, o
-   Agent no cluster e — pela API — dashboard, 8 monitors e o SLO.
+   Agent no cluster e — pela API — dashboard (inclui o grupo "Saga, mensageria e pagamentos"), os monitors (5 por serviço, 3 únicos e 7 da Saga) e o SLO.
 5. **Deploy da aplicação** (repo `oficina-app`), para que o `dd-java-agent`, o scrape do
    `/actuator/prometheus` e os logs em JSON comecem a chegar.
-6. **Preencher a variable `APP_PUBLIC_URL`** com o endereço do NLB
-   (`kubectl -n oficina-prd get svc oficina-api`) e aplicar de novo: só então o teste
-   sintético de uptime é criado. O NLB nasce com o `Service`, fora do Terraform, e por
-   isso não existe antes deste ponto.
+6. **Preencher a variable `APP_PUBLIC_URL`** com a URL do API Gateway (output
+   `api_gateway_url` do `oficina-lambda-auth`) e aplicar de novo: só então o teste
+   sintético de uptime é criado. O gateway nasce em outro repositório, depois do deploy
+   dos serviços, e por isso não existe antes deste ponto.
 
 Para notificar de verdade, defina `datadog_alerta_destino` (ex.: `@seu@email.com` ou
 `@slack-canal`). Vazio, os monitors disparam e ficam visíveis na UI, mas não acordam
@@ -227,7 +231,7 @@ outras.
 | EKS control plane | 0,10 |
 | 2× `t3.medium` | 0,083 |
 | NAT Gateway | 0,045 |
-| NLB da API (criado pelo Service) | 0,0225 |
+| ALB do ambiente (criado pelo controller; um por ambiente) | 0,0225 |
 | **Total desta camada** | **≈ 0,25/h (~US$ 6,00/dia)** |
 
 Somando o RDS de hml e prd (repo do banco), o ambiente completo fica em
@@ -244,7 +248,7 @@ dos outputs desta camada e ficaria órfão.
 # 2. Aqui:  Actions -> CI/CD (plataforma Kubernetes) -> destroy
 ```
 
-O job de `destroy` já remove os Services/NLBs do cluster antes de derrubar a VPC.
+O job de `destroy` já remove os Ingress/ALBs e os Services do cluster antes de derrubar a VPC.
 
 ## Limitações conhecidas (escopo de desafio técnico)
 

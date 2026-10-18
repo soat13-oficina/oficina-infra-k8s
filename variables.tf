@@ -41,9 +41,9 @@ variable "node_min_size" {
 }
 
 variable "node_max_size" {
-  description = "Maximo de nodes no managed node group - teto para o crescimento do HPA da aplicacao."
+  description = "Maximo de nodes no managed node group - teto para o crescimento dos HPAs. 5 (e nao 4) porque sao tres servicos por ambiente: com os dois ambientes no pico do HPA os requests chegam a ~3,9 vCPU e ~6 GiB (PLANO-FASE-4.md, secao 9.4) e a margem acaba em 4 nodes t3.medium. Em repouso, 2 nodes bastam; o teto so custa quando o HPA o usa."
   type        = number
-  default     = 4
+  default     = 5
 }
 
 variable "node_desired_size" {
@@ -52,25 +52,29 @@ variable "node_desired_size" {
   default     = 2
 }
 
-variable "ecr_repository_name" {
-  description = "Nome do repositorio ECR das imagens da aplicacao."
-  type        = string
-  default     = "oficina"
-}
-
 # A segregacao homologacao/producao acontece por namespace (plataforma
-# compartilhada - ver docs/adr/0002-plataforma-compartilhada.md). Esta lista
-# define quais ServiceAccounts podem assumir a IAM Role de SES via IRSA.
+# compartilhada - ver docs/adr/0002-plataforma-compartilhada.md). Esta lista e o
+# contrato de nomes com os repositorios dos servicos e com o job de destroy, que limpa
+# os Ingress desses namespaces antes de remover a plataforma.
 variable "app_namespaces" {
-  description = "Namespaces do cluster que hospedam a aplicacao, um por ambiente."
+  description = "Namespaces do cluster que hospedam os servicos, um por ambiente."
   type        = list(string)
   default     = ["oficina-hml", "oficina-prd"]
 }
 
-variable "app_service_account" {
-  description = "Nome do ServiceAccount da aplicacao dentro de cada namespace (deve casar com os manifestos do repo da aplicacao)."
+# --- Exposicao (AWS Load Balancer Controller) -----------------------------------------
+# Ver alb-controller.tf e docs/adr/0008-exposicao-e-roteamento.md do oficina-app.
+
+variable "alb_controller_enabled" {
+  description = "Instala o AWS Load Balancer Controller (Helm). DESLIGUE no PRIMEIRO apply de um cluster novo, pelo mesmo motivo de datadog_enabled: o provider helm se configura a partir do module.eks e, enquanto o cluster nao existe, endpoint e CA sao desconhecidos no plan. Sem o controller, os Ingress dos servicos sao aceitos pelo cluster mas nenhum ALB nasce."
+  type        = bool
+  default     = true
+}
+
+variable "alb_controller_chart_version" {
+  description = "Versao do chart eks/aws-load-balancer-controller. FIXADA junto com a politica IAM de policies/aws-load-balancer-controller-iam-policy.json (baixada da mesma tag do projeto): trocar uma sem a outra deixa o controller sem permissao para uma API nova. Ao subir a versao, baixe a politica da tag correspondente em kubernetes-sigs/aws-load-balancer-controller/docs/install/iam_policy.json."
   type        = string
-  default     = "oficina-api"
+  default     = "3.5.0"
 }
 
 # --- Observabilidade (Datadog) ------------------------------------------------------
@@ -131,8 +135,14 @@ variable "datadog_latencia_p95_segundos" {
   default     = 2
 }
 
+variable "servicos" {
+  description = "Servicos monitorados: o nome e o DD_SERVICE (unified service tagging) E o nome do Deployment, que coincidem. Cada um ganha seus monitors de erro 5xx, latencia, CPU, memoria e replicas. O OS Service ainda se chama oficina-api; vira oficina-os-service no rename (docs/arquitetura/convencoes-de-nomes.md do oficina-app) - troque aqui no mesmo dia."
+  type        = list(string)
+  default     = ["oficina-api", "oficina-billing-service", "oficina-execution-service"]
+}
+
 variable "app_public_url" {
-  description = "URL publica da aplicacao (NLB criado pelo Service do Kubernetes), sem barra final - ex.: http://k8s-oficina-abc123.elb.us-east-1.amazonaws.com. Vazia (padrao) desliga o teste sintetico de uptime. O endereco nasce FORA do Terraform, com o Service, entao so e conhecido apos o primeiro deploy da aplicacao: preencher no apply seguinte."
+  description = "URL publica do sistema, sem barra final: o invoke_url do API Gateway (output api_gateway_url de oficina-lambda-auth, ex.: https://abc123.execute-api.us-east-1.amazonaws.com) ou o ALB. Vazia (padrao) desliga o teste sintetico de uptime. Nasce fora desta camada, entao so e conhecida depois do deploy: preencher no apply seguinte."
   type        = string
   default     = ""
 }

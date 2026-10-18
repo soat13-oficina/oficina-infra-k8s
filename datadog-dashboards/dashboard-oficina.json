@@ -1,6 +1,6 @@
 {
   "title": "Oficina - Ordens de Servico e Plataforma",
-  "description": "Dashboard unico da Fase 3: volume diario de OS, tempo medio por situacao, latencia e erros das APIs, CPU/memoria no Kubernetes, uptime e falhas nas integracoes.\n\nOs seletores no topo trocam de ambiente. Sao dois porque as fontes usam tags diferentes: $env vale para APM e (como ambiente:$env.value) para as metricas de negocio, enquanto kube-state-metrics so conhece $kube_namespace. Ao trocar um, troque o outro.\n\nGerenciado por Terraform em oficina-infra-k8s/datadog-dashboard.tf - edicoes feitas pela UI sao desfeitas no proximo apply.",
+  "description": "Dashboard unico: volume diario de OS, tempo medio por situacao, latencia e erros das APIs, CPU/memoria no Kubernetes, uptime e falhas nas integracoes e, na Fase 4, o funil da Saga, compensacoes, pagamentos, estoque, outbox e DLQs dos tres servicos.\n\nOs seletores no topo trocam de ambiente. Sao dois porque as fontes usam tags diferentes: $env vale para APM e (como ambiente:$env.value) para as metricas de negocio, enquanto kube-state-metrics so conhece $kube_namespace. Ao trocar um, troque o outro.\n\nGerenciado por Terraform em oficina-infra-k8s/datadog-dashboard.tf - edicoes feitas pela UI sao desfeitas no proximo apply.",
   "layout_type": "ordered",
   "reflow_type": "fixed",
   "template_variables": [
@@ -15,6 +15,18 @@
       "prefix": "kube_namespace",
       "available_values": ["oficina-prd", "oficina-hml"],
       "default": "oficina-prd"
+    },
+    {
+      "name": "service",
+      "prefix": "service",
+      "available_values": ["oficina-api", "oficina-billing-service", "oficina-execution-service"],
+      "default": "oficina-api"
+    },
+    {
+      "name": "kube_deployment",
+      "prefix": "kube_deployment",
+      "available_values": ["oficina-api", "oficina-billing-service", "oficina-execution-service"],
+      "default": "oficina-api"
     }
   ],
   "widgets": [
@@ -198,17 +210,17 @@
                     {
                       "name": "p50",
                       "data_source": "metrics",
-                      "query": "p50:trace.servlet.request{$env,service:oficina-api}"
+                      "query": "p50:trace.servlet.request{$env,$service}"
                     },
                     {
                       "name": "p95",
                       "data_source": "metrics",
-                      "query": "p95:trace.servlet.request{$env,service:oficina-api}"
+                      "query": "p95:trace.servlet.request{$env,$service}"
                     },
                     {
                       "name": "p99",
                       "data_source": "metrics",
-                      "query": "p99:trace.servlet.request{$env,service:oficina-api}"
+                      "query": "p99:trace.servlet.request{$env,$service}"
                     }
                   ],
                   "formulas": [
@@ -243,7 +255,7 @@
                     {
                       "name": "hits",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.hits{$env,service:oficina-api}.as_count()",
+                      "query": "sum:trace.servlet.request.hits{$env,$service}.as_count()",
                       "aggregator": "sum"
                     }
                   ],
@@ -266,13 +278,13 @@
                     {
                       "name": "erros",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.errors{$env,service:oficina-api}.as_count()",
+                      "query": "sum:trace.servlet.request.errors{$env,$service}.as_count()",
                       "aggregator": "sum"
                     },
                     {
                       "name": "total",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.hits{$env,service:oficina-api}.as_count()",
+                      "query": "sum:trace.servlet.request.hits{$env,$service}.as_count()",
                       "aggregator": "sum"
                     }
                   ],
@@ -298,7 +310,7 @@
                     {
                       "name": "lentos",
                       "data_source": "metrics",
-                      "query": "p95:trace.servlet.request{$env,service:oficina-api} by {resource_name}",
+                      "query": "p95:trace.servlet.request{$env,$service} by {resource_name}",
                       "aggregator": "avg"
                     }
                   ],
@@ -324,7 +336,7 @@
                     {
                       "name": "erros",
                       "data_source": "metrics",
-                      "query": "sum:trace.servlet.request.errors{$env,service:oficina-api} by {resource_name}.as_count()",
+                      "query": "sum:trace.servlet.request.errors{$env,$service} by {resource_name}.as_count()",
                       "aggregator": "sum"
                     }
                   ],
@@ -364,7 +376,7 @@
                     {
                       "name": "uso",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.cpu.usage.total{$kube_namespace,kube_deployment:oficina-api} by {pod_name}"
+                      "query": "avg:kubernetes.cpu.usage.total{$kube_namespace,$kube_deployment} by {pod_name}"
                     }
                   ],
                   "formulas": [{ "formula": "uso / 1000000000", "alias": "uso (cores)" }],
@@ -377,7 +389,7 @@
                     {
                       "name": "limite",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.cpu.limits{$kube_namespace,kube_deployment:oficina-api}"
+                      "query": "avg:kubernetes.cpu.limits{$kube_namespace,$kube_deployment}"
                     }
                   ],
                   "formulas": [{ "formula": "limite", "alias": "limite (cores)" }],
@@ -402,7 +414,7 @@
                     {
                       "name": "uso",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.memory.usage{$kube_namespace,kube_deployment:oficina-api} by {pod_name}"
+                      "query": "avg:kubernetes.memory.usage{$kube_namespace,$kube_deployment} by {pod_name}"
                     }
                   ],
                   "formulas": [{ "formula": "uso", "alias": "uso" }],
@@ -415,7 +427,7 @@
                     {
                       "name": "limite",
                       "data_source": "metrics",
-                      "query": "avg:kubernetes.memory.limits{$kube_namespace,kube_deployment:oficina-api}"
+                      "query": "avg:kubernetes.memory.limits{$kube_namespace,$kube_deployment}"
                     }
                   ],
                   "formulas": [{ "formula": "limite", "alias": "limite" }],
@@ -439,7 +451,7 @@
                     {
                       "name": "prontas",
                       "data_source": "metrics",
-                      "query": "sum:kubernetes_state.deployment.replicas_ready{$kube_namespace,kube_deployment:oficina-api}",
+                      "query": "sum:kubernetes_state.deployment.replicas_ready{$kube_namespace,$kube_deployment}",
                       "aggregator": "last"
                     }
                   ],
@@ -535,7 +547,7 @@
                   "response_format": "event_list",
                   "query": {
                     "data_source": "logs_stream",
-                    "query_string": "service:oficina-api $env (status:error OR @log.level:ERROR)",
+                    "query_string": "$service $env (status:error OR @log.level:ERROR)",
                     "indexes": [],
                     "storage": "hot"
                   },
@@ -554,6 +566,607 @@
         ]
       },
       "layout": { "x": 0, "y": 27, "width": 12, "height": 9 }
+    },
+    {
+      "definition": {
+        "title": "Saga, mensageria e pagamentos (Fase 4)",
+        "type": "group",
+        "layout_type": "ordered",
+        "show_title": true,
+        "widgets": [
+          {
+            "definition": {
+              "title": "Funil da Saga: ordens ativas por passo",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "area",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "avg:oficina.saga.ativas{ambiente:$env.value} by {passo}"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 0,
+              "y": 0,
+              "width": 6,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Sagas com prazo vencido (presas)",
+              "type": "query_value",
+              "autoscale": false,
+              "precision": 0,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "max:oficina.saga.presas{ambiente:$env.value}",
+                      "aggregator": "max"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "conditional_formats": [
+                    {
+                      "comparator": ">",
+                      "value": 0,
+                      "palette": "white_on_red"
+                    },
+                    {
+                      "comparator": "<=",
+                      "value": 0,
+                      "palette": "black_on_light_green"
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 0,
+              "width": 3,
+              "height": 2
+            }
+          },
+          {
+            "definition": {
+              "title": "Falhas de compensacao (FALHA_COMPENSACAO)",
+              "type": "query_value",
+              "autoscale": false,
+              "precision": 0,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.saga.finalizadas.count{ambiente:$env.value,resultado:falha_compensacao}.as_count()",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "conditional_formats": [
+                    {
+                      "comparator": ">",
+                      "value": 0,
+                      "palette": "white_on_red"
+                    },
+                    {
+                      "comparator": "<=",
+                      "value": 0,
+                      "palette": "black_on_light_green"
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": {
+              "x": 9,
+              "y": 0,
+              "width": 3,
+              "height": 2
+            }
+          },
+          {
+            "definition": {
+              "title": "Desfecho das Sagas",
+              "type": "toplist",
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.saga.finalizadas.count{ambiente:$env.value} by {resultado}.as_count()",
+                      "aggregator": "sum"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": {
+              "x": 6,
+              "y": 2,
+              "width": 6,
+              "height": 2
+            }
+          },
+          {
+            "definition": {
+              "title": "Compensacoes por motivo",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.saga.compensacoes.count{ambiente:$env.value} by {motivo}.as_count()"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 0,
+              "y": 4,
+              "width": 6,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Duracao media da Saga, em minutos (abertura ate o fim)",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "soma",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.saga.duracao.sum{ambiente:$env.value} by {resultado}.as_count()"
+                    },
+                    {
+                      "name": "qtd",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.saga.duracao.count{ambiente:$env.value} by {resultado}.as_count()"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "soma / qtd / 60",
+                      "alias": "minutos"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 6,
+              "y": 4,
+              "width": 6,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Pagamentos por desfecho",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "criados",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.pagamento.criados.count{ambiente:$env.value}.as_count()"
+                    },
+                    {
+                      "name": "aprovados",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.pagamento.aprovados.count{ambiente:$env.value}.as_count()"
+                    },
+                    {
+                      "name": "recusados",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.pagamento.recusados.count{ambiente:$env.value}.as_count()"
+                    },
+                    {
+                      "name": "expirados",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.pagamento.expirados.count{ambiente:$env.value}.as_count()"
+                    },
+                    {
+                      "name": "estornados",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.pagamento.estornados.count{ambiente:$env.value}.as_count()"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "criados",
+                      "alias": "criados"
+                    },
+                    {
+                      "formula": "aprovados",
+                      "alias": "aprovados"
+                    },
+                    {
+                      "formula": "recusados",
+                      "alias": "recusados"
+                    },
+                    {
+                      "formula": "expirados",
+                      "alias": "expirados"
+                    },
+                    {
+                      "formula": "estornados",
+                      "alias": "estornados"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 0,
+              "y": 8,
+              "width": 6,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Reservas de estoque: atendidas x recusadas por falta de peca",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.estoque.reservas.count{ambiente:$env.value} by {resultado}.as_count()"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 6,
+              "y": 8,
+              "width": 6,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Mensagens publicadas por fila",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.mensageria.publicadas.count{ambiente:$env.value} by {fila}.as_count()"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 0,
+              "y": 12,
+              "width": 4,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Falhas de publicacao por servico (nova tentativa no proximo ciclo)",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "bars",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "sum:oficina.mensageria.falhas.count{ambiente:$env.value} by {service}.as_count()"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 4,
+              "y": 12,
+              "width": 4,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Outbox: pendentes por servico",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "max:oficina.outbox.pendentes{ambiente:$env.value} by {service}"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 8,
+              "y": 12,
+              "width": 4,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Outbox: idade da mensagem mais antiga, em segundos",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "max:oficina.outbox.idade.maxima{ambiente:$env.value} by {service}"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 0,
+              "y": 16,
+              "width": 4,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "DLQ: mensagens por fila (qualquer valor acima de zero e incidente)",
+              "type": "timeseries",
+              "show_legend": true,
+              "requests": [
+                {
+                  "response_format": "timeseries",
+                  "display_type": "line",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "max:oficina.mensageria.dlq.mensagens{ambiente:$env.value} by {service,fila}"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "style": {
+                    "palette": "dog_classic"
+                  }
+                }
+              ],
+              "yaxis": {
+                "min": "0",
+                "include_zero": true
+              }
+            },
+            "layout": {
+              "x": 4,
+              "y": 16,
+              "width": 4,
+              "height": 4
+            }
+          },
+          {
+            "definition": {
+              "title": "Mensagens esgotadas no outbox",
+              "type": "query_value",
+              "autoscale": false,
+              "precision": 0,
+              "requests": [
+                {
+                  "response_format": "scalar",
+                  "queries": [
+                    {
+                      "name": "a",
+                      "data_source": "metrics",
+                      "query": "max:oficina.outbox.esgotadas{ambiente:$env.value}",
+                      "aggregator": "max"
+                    }
+                  ],
+                  "formulas": [
+                    {
+                      "formula": "a"
+                    }
+                  ],
+                  "conditional_formats": [
+                    {
+                      "comparator": ">",
+                      "value": 0,
+                      "palette": "white_on_red"
+                    },
+                    {
+                      "comparator": "<=",
+                      "value": 0,
+                      "palette": "black_on_light_green"
+                    }
+                  ]
+                }
+              ]
+            },
+            "layout": {
+              "x": 8,
+              "y": 16,
+              "width": 4,
+              "height": 4
+            }
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 36,
+        "width": 12,
+        "height": 21
+      }
     }
   ]
 }
