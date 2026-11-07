@@ -83,18 +83,23 @@ resource "datadog_synthetics_test" "uptime_api" {
 # budget. Baseado em MONITOR (e nao em metrica) porque os sinais ja existem como monitor e
 # nao ha metrica unica que represente "a API estava utilizavel".
 #
-# O SLO cobre o monitor de replicas sempre, e soma o sintetico quando ha URL publica
-# configurada - assim ele nasce valido no primeiro apply, antes mesmo de a aplicacao ter
-# sido publicada, em vez de quebrar o dashboard que o referencia.
+# O SLO cobre sempre os monitores de replicas (um por servico, var.servicos), e soma o
+# sintetico quando ha URL publica configurada - assim ele nasce valido no primeiro apply,
+# antes mesmo de a aplicacao ter sido publicada, em vez de quebrar o dashboard que o
+# referencia.
+#
+# replicas_prontas e for_each (mapa servico => monitor), nao count: indice numerico ([0])
+# passa no validate, mas falha no plan com "Invalid index" assim que a app key existe.
+# values() devolve em ordem de chave, entao o plan nao oscila entre applies.
 resource "datadog_service_level_objective" "disponibilidade_api" {
   count = local.datadog_api_habilitada ? 1 : 0
 
   name        = "[oficina][${var.datadog_ambiente_monitorado}] Disponibilidade da API"
   type        = "monitor"
-  description = "Percentual do tempo em que a API esteve com todas as replicas prontas e acessivel pela internet."
+  description = "Percentual do tempo em que os servicos estiveram com todas as replicas prontas e a API acessivel pela internet."
 
   monitor_ids = concat(
-    [datadog_monitor.replicas_prontas[0].id],
+    values(datadog_monitor.replicas_prontas)[*].id,
     local.datadog_uptime_habilitado ? [datadog_synthetics_test.uptime_api[0].monitor_id] : [],
   )
 
