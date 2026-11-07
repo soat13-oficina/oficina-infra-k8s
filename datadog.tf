@@ -148,14 +148,16 @@ resource "helm_release" "datadog" {
         }
       }
     }),
+  ]
 
-    # A chave vive num values SEPARADO de proposito: como var.datadog_api_key e sensitive,
-    # o Terraform redige o elemento inteiro da lista que a contem. Mantendo-a isolada, o
-    # restante dos values continua legivel no plan.
-    yamlencode({
-      datadog = {
-        apiKey = var.datadog_api_key
-      }
-    })
+  # A chave entra por set_sensitive, e NAO pelos values. O provider helm devolve os values no
+  # atributo metadata, que nao e sensitive: quando o release muda, o plan mostra esse metadata
+  # e, com a chave nos values, o apiKey aparecia em texto puro (vazou assim no comentario do PR
+  # #12). set_sensitive e redigido tambem no metadata.
+  set_sensitive = [
+    {
+      name  = "datadog.apiKey"
+      value = var.datadog_api_key
+    },
   ]
 }
