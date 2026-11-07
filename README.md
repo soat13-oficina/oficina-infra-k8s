@@ -46,6 +46,7 @@ Ordem de destruição: exatamente a inversa.
 | `datadog-monitores.tf` | `datadog_monitor` | Alertas **por serviço** (`var.servicos`, `for_each`): 5xx, latência p95, CPU e memória do pod, réplicas prontas; e únicos: falha de notificação, CrashLoopBackOff, erros de integração |
 | `datadog-saga.tf` | `datadog_monitor` ×7 | Alertas do sistema (não de um serviço): mensagem na DLQ, saga presa, compensação esgotada (`FALHA_COMPENSACAO`), taxa de compensação alta, outbox parado ou esgotado e webhook do Mercado Pago recusado |
 | `datadog-uptime.tf` | `datadog_synthetics_test` + `datadog_service_level_objective` | Teste HTTP externo de duas regiões e SLO de disponibilidade |
+| `datadog-logs.tf` | `datadog_logs_custom_pipeline` | Pipeline dos logs ECS dos serviços: `log.level` vira o *status* (sem ele todo log, até ERROR, chega como info) e `error.type`/`error.stack_trace` viram `error.kind`/`error.stack` |
 | `outputs.tf` | — | **Contrato público** consumido pelos outros repositórios |
 
 ### Escalabilidade
@@ -168,7 +169,7 @@ workflow uma vez na sua branch para fixá-las.
 | Variable | `TF_STATE_BUCKET` | Nome da bucket S3 do state |
 | Variable | `AWS_REGION` | Opcional, default `us-east-1` |
 | Secret | `DATADOG_API_KEY` | **Opcional**, pode ser secret de organização. Ausente = o Datadog Agent não é instalado e o `apply` roda como antes. Preencher liga a observabilidade ([ADR 0003](docs/adr/0003-observabilidade-datadog.md)) |
-| Secret | `DATADOG_APP_KEY` | **Opcional.** *Application key* — credencial **diferente** da API key. Ausente = o agent sobe, mas dashboard, monitors, teste sintético e SLO não são criados. Escopos: `dashboards_write`, `monitors_write`, `synthetics_write`, `slos_write` |
+| Secret | `DATADOG_APP_KEY` | **Opcional.** *Application key* — credencial **diferente** da API key. Ausente = o agent sobe, mas dashboard, monitors, teste sintético e SLO não são criados. Escopos: `dashboards_write`, `monitors_write`, `synthetics_write`, `slos_write`, `logs_write_pipelines` |
 | Variable | `APP_PUBLIC_URL` | **Opcional.** URL do API Gateway (`api_gateway_url` do `oficina-lambda-auth`), sem barra final. Habilita o teste sintético de uptime — só existe após o deploy dos serviços |
 
 > **Bootstrap de cluster novo.** Com a chave presente, o **primeiro** `apply` de um cluster
@@ -193,11 +194,11 @@ Ordem de ativação, já com o cluster no ar:
 1. **Ativar o trial de 14 dias** na Datadog (o free tier cobre métricas de infra, mas não
    APM nem logs). Fazer isso **perto da demo** — o relógio começa a correr aqui.
 2. **Criar as duas chaves** em *Organization Settings*: uma **API key** e uma
-   **Application key** com `dashboards_write`, `monitors_write`, `synthetics_write` e
-   `slos_write`.
+   **Application key** com `dashboards_write`, `monitors_write`, `synthetics_write`,
+   `slos_write` e `logs_write_pipelines`.
 3. **Cadastrar os secrets** `DATADOG_API_KEY` e `DATADOG_APP_KEY` no repositório.
 4. **`apply`** (push na `master` ou `workflow_dispatch`). Sobem, na mesma execução, o
-   Agent no cluster e — pela API — dashboard (inclui o grupo "Saga, mensageria e pagamentos"), os monitors (5 por serviço, 3 únicos e 7 da Saga) e o SLO.
+   Agent no cluster e — pela API — dashboard (inclui o grupo "Saga, mensageria e pagamentos"), os monitors (5 por serviço, 3 únicos e 7 da Saga), o SLO e o pipeline de logs.
 5. **Deploy da aplicação** (repo `oficina-app`), para que o `dd-java-agent`, o scrape do
    `/actuator/prometheus` e os logs em JSON comecem a chegar.
 6. **Preencher a variable `APP_PUBLIC_URL`** com a URL do API Gateway (output
@@ -219,10 +220,26 @@ que a métrica existe naquela organização. Com dado chegando, confirmar:
 | `oficina.os.criadas.count` e `oficina.os.tempo_na_situacao.sum` | *Metrics Explorer* | Scrape do OpenMetrics: revisar a anotação `ad.datadoghq.com/oficina-api.checks` |
 | `trace.servlet.request` (p95, hits, errors) | *APM > Services* | `-javaagent` e `DD_AGENT_HOST` no pod |
 | `kubernetes.memory.limits` e `kubernetes_state.deployment.replicas_ready` | *Metrics Explorer* | `kubeStateMetricsEnabled` no chart |
-| Logs com `@correlation_id` e `service:oficina-api` | *Logs* | `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` e `logs.containerCollectAll` |
+| Logs com `@correlation_id` e `service:oficina-api` | *Logs* | `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs`, `logs.containerCollectAll` e `containerIncludeLogs` (namespace do ambiente) |
+| Log ERROR com `status:error` | *Logs*, filtro `service:oficina-* status:error` | Pipeline `[oficina] Servicos Spring Boot (ECS)` (`datadog-logs.tf`); se o log chega mas o status não muda, conferir se o JSON traz `log.level` |
 
 Cada linha vazia derruba um painel específico do dashboard — nenhuma delas derruba as
 outras.
+
+### O que vai para os logs (e o que não vai)
+
+O volume é cortado **na origem**, não no índice da Datadog:
+
+| Corte | Onde |
+|---|---|
+| Só os namespaces da aplicação (`oficina-hml`, `oficina-prd`); nada de `kube-system` nem do próprio agent | `containerExcludeLogs`/`containerIncludeLogs` em `datadog.tf` |
+| Traces de `/actuator` (probes e scrape do Prometheus) descartados no trace-agent | `DD_APM_IGNORE_RESOURCES` em `datadog.tf` |
+| SQL fora do log (`show-sql: false`) | `application.yml` do `oficina-app` |
+| `INFO` só do código do serviço (`br.com.oficina`); Spring, Hibernate, Hikari, Flyway, Tomcat e AWS SDK só `WARN`+ | `logging.level` no `application.yml` dos três serviços |
+| Sem o dump de configuração do tracer a cada subida | `DD_TRACE_STARTUP_LOGS=false` no `deployment.yaml` dos três serviços |
+
+Por isso o índice `main` fica sem *exclusion filter*: o que chega até ele já é só o que a demo
+e os monitors usam.
 
 ## Custo estimado (us-east-1)
 

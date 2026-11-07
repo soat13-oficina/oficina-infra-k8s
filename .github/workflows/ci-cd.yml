@@ -23,8 +23,9 @@ name: CI/CD (plataforma Kubernetes)
 #   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 #              DATADOG_API_KEY (opcional; ausente = plataforma sem observabilidade)
 #              DATADOG_APP_KEY (opcional; ausente = agent sobe, mas sem dashboard,
-#                               monitors, synthetic nem SLO - sao escrita na API de
-#                               configuracao e a API key nao autoriza isso)
+#                               monitors, synthetic, SLO nem pipeline de logs - sao
+#                               escrita na API de configuracao e a API key nao
+#                               autoriza isso)
 #   Variables: TF_STATE_BUCKET (bucket S3 do state)
 #              AWS_REGION (opcional, default us-east-1)
 #              APP_PUBLIC_URL (opcional; URL do NLB da aplicacao, sem barra final -

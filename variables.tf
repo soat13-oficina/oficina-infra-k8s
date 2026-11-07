@@ -106,7 +106,7 @@ variable "datadog_chart_version" {
 }
 
 variable "datadog_app_key" {
-  description = "APPLICATION key da Datadog. Credencial DIFERENTE da API key: a API key envia telemetria (Agent), a app key assina a escrita na API de configuracao e e o que cria dashboards, monitors, synthetics e SLO. Vazia (padrao) desliga so esses recursos - o Agent continua subindo com a API key. Escopos necessarios: dashboards_write, monitors_write, synthetics_write, slos_write."
+  description = "APPLICATION key da Datadog. Credencial DIFERENTE da API key: a API key envia telemetria (Agent), a app key assina a escrita na API de configuracao e e o que cria dashboards, monitors, synthetics e SLO. Vazia (padrao) desliga so esses recursos - o Agent continua subindo com a API key. Escopos necessarios: dashboards_write, monitors_write, synthetics_write, slos_write, logs_write_pipelines."
   type        = string
   default     = ""
   sensitive   = true
