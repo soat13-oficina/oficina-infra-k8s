@@ -1,10 +1,10 @@
-# Provider da API da Datadog - dashboards, monitors, synthetics e SLO (ADR 0003).
+# Provider da API da Datadog - dashboards, monitors, synthetics, SLO e pipeline de logs (ADR 0003).
 #
 # DUAS CREDENCIAIS, E NAO UMA. O Agent (datadog.tf) precisa so da API key: ela identifica
 # a ORGANIZACAO e serve para ENVIAR telemetria. Criar dashboard, monitor ou teste sintetico
 # e ESCRITA na API de configuracao e exige tambem uma APPLICATION key, que identifica o
 # USUARIO que assina a chamada e carrega os escopos (dashboards_write, monitors_write,
-# synthetics_write, slos_write).
+# synthetics_write, slos_write, logs_write_pipelines).
 #
 # Consequencia pratica: so a API key liga o agent e nao cria nenhum monitor; so a app key
 # nao faz nada. Por isso o gate abaixo e separado do gate do helm_release.

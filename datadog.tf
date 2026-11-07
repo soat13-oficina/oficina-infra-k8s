@@ -63,13 +63,22 @@ resource "helm_release" "datadog" {
         clusterName = var.cluster_name
         site        = var.datadog_site
 
-        # Logs: coleta o stdout de todos os containers. E o que traz o JSON estruturado
-        # da aplicacao (LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs) com dd.trace_id no MDC,
-        # fechando a correlacao log <-> trace.
+        # Logs: o stdout dos containers da APLICACAO. E o que traz o JSON estruturado dos
+        # servicos (LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs) com dd.trace_id no MDC, fechando a
+        # correlacao log <-> trace.
         logs = {
           enabled             = true
           containerCollectAll = true
         }
+
+        # ...mas so dos namespaces da aplicacao (var.app_namespaces). Sem este filtro o
+        # containerCollectAll manda tudo do cluster - aws-node, kube-proxy, coredns, ALB
+        # controller, metrics-server e o proprio agent -, e nada disso aparece na demo nem
+        # alimenta monitor. Exclui todos e reinclui os da aplicacao (o include tem
+        # precedencia). So afeta LOGS: metricas de node, pod e kube-state continuam vindo de
+        # todos os namespaces.
+        containerExcludeLogs = "kube_namespace:.*"
+        containerIncludeLogs = join(" ", [for ns in var.app_namespaces : "kube_namespace:^${ns}$"])
 
         # APM. portEnabled abre a 8126 no host: e assim que o dd-java-agent do pod
         # alcanca o agent, via DD_AGENT_HOST=status.hostIP (k8s/base/deployment.yaml
@@ -112,6 +121,15 @@ resource "helm_release" "datadog" {
               requests = { cpu = "50m", memory = "96Mi" }
               limits   = { cpu = "200m", memory = "256Mi" }
             }
+            # Descarta os traces do /actuator: probes do kubelet (liveness/readiness) e o
+            # scrape do /actuator/prometheus pelo proprio agent, varias vezes por minuto em
+            # cada pod. Eles enchiam o Trace Explorer e entravam no trace.servlet.request,
+            # puxando para baixo o p95 e a taxa de erro que os monitors e o dashboard leem.
+            # Sem trafego real a metrica fica sem dados, e os monitors ja tem
+            # notify_no_data = false.
+            env = [
+              { name = "DD_APM_IGNORE_RESOURCES", value = "GET /actuator.*" },
+            ]
           }
         }
       }
